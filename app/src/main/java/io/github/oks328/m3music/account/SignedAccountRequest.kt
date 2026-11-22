@@ -25,6 +25,6 @@ internal object SignedAccountRequest {
 internal fun isAllowedLoginUrl(url: String): Boolean = runCatching {
     val uri = URI(url)
     uri.scheme.equals("https", true) && uri.userInfo == null && uri.port in listOf(-1, 443) &&
-        uri.host?.lowercase() in setOf("accounts.google.com", "accounts.google.com.ph", "accounts.youtube.com", "music.youtube.com",
+        uri.host?.lowercase() in setOf("accounts.google.com", "accounts.google.com.ph", "gds.google.com", "accounts.youtube.com", "music.youtube.com",
             "www.youtube.com", "consent.google.com", "consent.youtube.com", "myaccount.google.com", "www.google.com")
 }.getOrDefault(false)

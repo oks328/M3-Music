@@ -31,6 +31,13 @@ class SignedAccountRequestTest {
             assertFalse(it, isAllowedLoginUrl(it))
         }
     }
+    @Test fun deviceVerificationRequiresTheExactGoogleHttpsHost() {
+        assertTrue(isAllowedLoginUrl("https://gds.google.com/"))
+        listOf("http://gds.google.com/", "https://gds.google.com.evil.example/",
+            "https://gds.google.com@evil.example/", "https://gds.google.com:8443/").forEach {
+            assertFalse(it, isAllowedLoginUrl(it))
+        }
+    }
     @Test fun philippinesVerificationRedirectRequiresTheExactHttpsHost() {
         assertTrue(isAllowedLoginUrl("https://accounts.google.com.ph/accounts/SetSID"))
         listOf("http://accounts.google.com.ph/", "https://accounts.google.com.ph.evil.example/",
