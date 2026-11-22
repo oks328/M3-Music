@@ -5,6 +5,8 @@ package io.github.oks328.m3music
 import android.app.Application
 import android.content.ComponentName
 import android.net.Uri
+import android.os.Bundle
+import java.util.UUID
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -163,12 +165,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private fun savedTrackIds() = downloads.value.items
         .filter { it.status == DownloadStatus.COMPLETED }.map { it.track.id }.toSet()
 
+    private companion object {
+        const val QueueEntryId = "io.github.oks328.m3music.QUEUE_ENTRY_ID"
+    }
+
     private fun Track.queueItem(saved: Boolean): MediaItem =
         MediaItem.Builder().setMediaId(id)
             .setUri(if (saved) "offline:///$id" else "track:///$id")
             .setCustomCacheKey(id)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(title).setArtist(artist)
-                .setArtworkUri(artworkUrl?.let(Uri::parse)).build())
+                .setArtworkUri(artworkUrl?.let(Uri::parse))
+                .setExtras(Bundle().apply { putString(QueueEntryId, UUID.randomUUID().toString()) })
+                .build())
             .build()
 
     fun previous() { controller?.seekToPreviousMediaItem(); updatePlayback() }
@@ -221,6 +229,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private var queueTimeline: androidx.media3.common.Timeline? = null
     private var cachedQueue: List<Track> = emptyList()
+    private var cachedQueueEntryIds: List<String> = emptyList()
 
     private fun updatePlayback() {
         val player = controller ?: return
@@ -234,8 +243,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         } ?: previous.track
         val timeline = player.currentTimeline
         if (queueTimeline !== timeline) {
-            cachedQueue = (0 until player.mediaItemCount).map { index ->
-                val queued = player.getMediaItemAt(index)
+            val mediaItems = List(player.mediaItemCount, player::getMediaItemAt)
+            cachedQueueEntryIds = mediaItems.mapIndexed { index, queued ->
+                queued.mediaMetadata.extras?.getString(QueueEntryId) ?: "external:${queued.mediaId}:$index"
+            }
+            cachedQueue = mediaItems.map { queued ->
                 Track(queued.mediaId, queued.mediaMetadata.title?.toString().orEmpty(),
                     queued.mediaMetadata.artist?.toString().orEmpty(), queued.mediaMetadata.artworkUri?.toString(), 0)
             }
@@ -261,6 +273,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 else -> RepeatMode.OFF
             },
             queue = cachedQueue,
+            queueEntryIds = cachedQueueEntryIds,
             error = if (player.playerError != null && previous.offline)
                 "Couldn't read this download. Remove it and download the song again."
             else if (player.playerError != null) "Playback stopped. Check your connection, then try again."

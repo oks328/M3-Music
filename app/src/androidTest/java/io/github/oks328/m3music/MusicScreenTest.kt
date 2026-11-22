@@ -322,6 +322,26 @@ class MusicScreenTest {
         compose.onNodeWithContentDescription("More options for A song").assertIsDisplayed()
     }
 
+    @Test fun draggingAcrossMultipleQueueRowsKeepsTheFirstSlotVisible() {
+        val songs = List(12) { index -> Track("song-$index", "Song $index", "Artist", null, 180) }
+        val moves = mutableListOf<Pair<Int, Int>>()
+        compose.setContent { M3MusicTheme {
+            MusicScreen(SearchState(), PlaybackState(connected = true, track = songs.first(), queue = songs,
+                queueSize = songs.size), {}, {}, {}, {}, {}, onMoveQueueItem = { from, to -> moves.add(from to to) })
+        } }
+        compose.onNodeWithContentDescription("Open now playing").performClick()
+        compose.onNodeWithText("Queue").performClick()
+        val firstHandle = compose.onNodeWithContentDescription("Reorder Song 0")
+        val draggedHandle = compose.onNodeWithContentDescription("Reorder Song 6")
+        val firstSlot = firstHandle.fetchSemanticsNode().boundsInRoot.center.y
+        val distance = draggedHandle.fetchSemanticsNode().boundsInRoot.center.y - firstSlot
+        draggedHandle.performTouchInput {
+            swipe(start = center, end = center.copy(y = center.y - distance), durationMillis = 650)
+        }
+        compose.runOnIdle { assertEquals(listOf(6 to 0), moves) }
+        assertEquals(firstSlot, draggedHandle.fetchSemanticsNode().boundsInRoot.center.y, 2f)
+    }
+
     @Test fun queueRowsCanMoveUpOrDown() {
         val first = Track("abcdefghijk", "First song", "Artist", null, 180)
         val second = Track("lmnopqrstuv", "Second song", "Artist", null, 180)
@@ -367,5 +387,19 @@ class MusicScreenTest {
             val (condensed, regular) = requireNotNull(widths)
             org.junit.Assert.assertTrue("Condensed width $condensed vs regular width $regular", condensed < regular * 0.8)
         }
+    }
+    @Test fun swipeUpOnMiniPlayerExpandsAndMinimizeReturnsToTheBar() {
+        val track = Track("abcdefghijk", "A song", "An artist", null, 180)
+        compose.setContent { M3MusicTheme {
+            MusicScreen(SearchState(), PlaybackState(connected = true, track = track, durationMs = 180000),
+                {}, {}, {}, {}, {})
+        } }
+        compose.onNodeWithContentDescription("Open now playing").performTouchInput {
+            swipe(start = center, end = center.copy(y = center.y - height * 2f))
+        }
+        compose.onNodeWithContentDescription("Song position").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Close now playing").performClick()
+        compose.onNodeWithContentDescription("Open now playing").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Song position").assertDoesNotExist()
     }
 }

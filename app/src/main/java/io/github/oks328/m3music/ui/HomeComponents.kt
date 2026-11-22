@@ -3,8 +3,6 @@
 package io.github.oks328.m3music.ui
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -15,48 +13,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.oks328.m3music.R
 import io.github.oks328.m3music.account.*
-import io.github.oks328.m3music.music.Track
-
-@Composable
-internal fun HomeIntro(onLiked: () -> Unit, onPlayLiked: () -> Unit = onLiked, canPlay: Boolean = true) {
-    Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
-        Surface(onClick = onLiked, shape = RoundedCornerShape(topStart = 36.dp, topEnd = 36.dp, bottomStart = 12.dp, bottomEnd = 36.dp),
-            color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.fillMaxWidth()) {
-            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Liked songs", style = MaterialTheme.typography.headlineSmall)
-                    Text("Your liked songs", style = MaterialTheme.typography.bodyMedium)
-                }
-                Surface(shape = MaterialShapes.Cookie4Sided.toShape(), color = MaterialTheme.colorScheme.tertiaryContainer) {
-                    Icon(painterResource(R.drawable.ic_heart), null, Modifier.padding(10.dp).size(24.dp), tint = MaterialTheme.colorScheme.onTertiaryContainer)
-                }
-                FilledIconButton(onClick = onPlayLiked, enabled = canPlay, modifier = Modifier.size(56.dp)) {
-                    Icon(painterResource(R.drawable.ic_play), "Play liked songs")
-                }
-            }
-        }
-    }
-}
-
-@Composable
-internal fun RecentShelf(recent: List<Track>, canPlay: Boolean, onPlay: (Track) -> Unit) {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Recently played", style = MaterialTheme.typography.titleLarge)
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(recent.take(8), key = { it.id }) { song ->
-                    Surface(onClick = { onPlay(song) }, enabled = canPlay, shape = RoundedCornerShape(20.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainerLow) {
-                        Column(Modifier.width(132.dp).padding(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Artwork(song.artworkUrl, Modifier.fillMaxWidth().aspectRatio(1f))
-                            Text(song.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
-                            Text(song.artist, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                }
-            }
-        }
-}
 
 @Composable
 internal fun CollectionCard(item: AccountItem, onClick: () -> Unit, modifier: Modifier = Modifier) {

@@ -22,15 +22,23 @@ import io.github.oks328.m3music.playback.PlaybackState
 import io.github.oks328.m3music.ui.theme.LocalMusicTypeStyles
 
 @Composable
-internal fun CompactPlayer(state: PlaybackState, onToggle: () -> Unit, onNext: () -> Unit, onExpand: () -> Unit) {
+internal fun CompactPlayer(
+    state: PlaybackState,
+    onToggle: () -> Unit,
+    onNext: () -> Unit,
+    onExpand: () -> Unit,
+    modifier: Modifier = Modifier,
+    inTransform: Boolean = false,
+) {
     val track = state.track ?: return
     val colors = MaterialTheme.colorScheme
     val motion = MaterialTheme.motionScheme
     val actionCorner by animateDpAsState(if (state.playing) 16.dp else 24.dp, motion.fastSpatialSpec(),
         label = "Mini-player control shape")
-    Surface(onClick = onExpand, shape = RoundedCornerShape(23.dp),
-        color = colors.secondaryContainer, contentColor = colors.onSecondaryContainer,
-        modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Open now playing" }) {
+    Surface(onClick = onExpand, shape = RoundedCornerShape(CompactPlayerCorner),
+        color = if (inTransform) androidx.compose.ui.graphics.Color.Transparent else colors.secondaryContainer,
+        contentColor = colors.onSecondaryContainer,
+        modifier = modifier.fillMaxWidth().semantics { contentDescription = "Open now playing" }) {
         BoxWithConstraints {
             val showNext = maxWidth >= 350.dp && LocalDensity.current.fontScale <= 1.2f && state.canNext
             Column {

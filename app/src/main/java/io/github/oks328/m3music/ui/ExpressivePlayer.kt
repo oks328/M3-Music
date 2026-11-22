@@ -4,10 +4,6 @@ package io.github.oks328.m3music.ui
 
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.animate
-import androidx.compose.foundation.gestures.Orientation
-import androidx.compose.foundation.gestures.draggable
-import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.ui.platform.LocalDensity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
@@ -17,6 +13,7 @@ import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Matrix
 import androidx.compose.ui.res.painterResource
@@ -37,22 +34,16 @@ import io.github.oks328.m3music.playback.PlaybackState
 internal fun ExpressivePlayer(state: PlaybackState, favorite: Boolean, onToggle: () -> Unit, onSeek: (Long) -> Unit,
     onRetry: () -> Unit, onPrevious: () -> Unit, onNext: () -> Unit, onQueueItem: (Int) -> Unit,
     onFavorite: () -> Unit, onDownload: () -> Unit, downloadEntry: DownloadEntry? = null, onShuffle: () -> Unit, onRepeat: () -> Unit, onClose: () -> Unit = {},
-    onDragOffset: (Float) -> Unit = {},
+    swipeModifier: @Composable (Boolean) -> Modifier = { Modifier },
     onArtist: ((String) -> Unit)? = null,
     onAddToPlaylist: () -> Unit = {},
     onMoveQueueItem: (Int, Int) -> Unit = { _, _ -> },
 ) {
     val track = state.track ?: return
+    val type = LocalMusicTypeStyles.current
+    val motionScale = rememberCoroutineScope().coroutineContext[MotionDurationScale]
     var queueVisible by remember { mutableStateOf(false) }
     BackHandler(queueVisible) { queueVisible = false }
-    var dragOffset by remember { mutableFloatStateOf(0f) }
-    val dragThreshold = with(LocalDensity.current) { 72.dp.toPx() }
-    val flingThreshold = with(LocalDensity.current) { 900.dp.toPx() }
-    val returnMotion = MaterialTheme.motionScheme.fastSpatialSpec<Float>()
-    val drag = rememberDraggableState { delta ->
-        dragOffset = (dragOffset + delta).coerceAtLeast(0f)
-        onDragOffset(dragOffset)
-    }
     var scrub by remember(track.id) { mutableStateOf<Float?>(null) }
     val morph = remember { Morph(MaterialShapes.Cookie4Sided, MaterialShapes.Circle) }
     val progress by animateFloatAsState(if (state.playing) 0f else 1f, MaterialTheme.motionScheme.fastSpatialSpec(), label = "Playback shape")
@@ -60,27 +51,18 @@ internal fun ExpressivePlayer(state: PlaybackState, favorite: Boolean, onToggle:
         val path = morph.toPath(progress.coerceIn(0f, 1f))
         path.transform(Matrix().apply { scale(size.width, size.height) }); addPath(path)
     } }
-    Column(Modifier.fillMaxSize().draggable(drag, Orientation.Vertical, enabled = !queueVisible,
-        onDragStopped = { velocity ->
-            if (dragOffset >= dragThreshold || (dragOffset >= dragThreshold / 4 && velocity >= flingThreshold)) {
-                onClose()
-            } else {
-                animate(dragOffset, 0f, animationSpec = returnMotion) { value, _ ->
-                    dragOffset = value.coerceAtLeast(0f)
-                    onDragOffset(dragOffset)
-                }
-            }
-        }).padding(horizontal = 24.dp).navigationBarsPadding()) {
+    Column(Modifier.fillMaxSize().then(swipeModifier(!queueVisible))
+        .padding(horizontal = 24.dp).navigationBarsPadding()) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             if (queueVisible) BackIconButton(onClick = { queueVisible = false }, description = "Back to player")
             else IconButton(onClick = onClose) { Icon(painterResource(R.drawable.ic_collapse), "Close now playing") }
             Text(if (queueVisible) { if (state.shuffle) "Queue" else "Up next" } else "Now playing", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
             if (queueVisible) IconButton(onClick = onClose) { Icon(painterResource(R.drawable.ic_collapse), "Close now playing") }
         }
-        if (queueVisible) {
-            ReorderableQueue(state, onQueueItem, onMoveQueueItem, Modifier.weight(1f))
-        } else {
-            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+        Box(Modifier.weight(1f).fillMaxWidth().musicContentFade(queueVisible)) {
+            if (queueVisible) {
+                ReorderableQueue(state, onQueueItem, onMoveQueueItem, Modifier.fillMaxSize())
+            } else BoxWithConstraints(Modifier.fillMaxSize()) {
                 val compact = maxHeight < 470.dp || maxWidth < 300.dp || LocalDensity.current.fontScale >= 1.3f
                 Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally) {
@@ -94,7 +76,7 @@ internal fun ExpressivePlayer(state: PlaybackState, favorite: Boolean, onToggle:
                     }
                     Column(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(track.title, style = if (compact) LocalMusicTypeStyles.current.condensedPlayerTitle else MaterialTheme.typography.headlineMedium,
+                        Text(track.title, style = if (compact) type.condensedPlayerTitle else type.expandedTrackTitle,
                             maxLines = if (compact) 1 else 2, overflow = TextOverflow.Ellipsis)
                         if (track.artist.isNotBlank()) {
                             val opensArtist = onArtist != null
@@ -130,7 +112,7 @@ internal fun ExpressivePlayer(state: PlaybackState, favorite: Boolean, onToggle:
                             enabled = state.durationMs > 0 && state.connected,
                             modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Song position" },
                             track = {
-                                val moving = state.playing && !state.buffering && scrub == null
+                                val moving = state.playing && !state.buffering && scrub == null && motionScale?.scaleFactor != 0f
                                 val amplitude = animateFloatAsState(
                                     if (moving) 0.65f else 0f,
                                     MaterialTheme.motionScheme.fastEffectsSpec(),
@@ -147,8 +129,8 @@ internal fun ExpressivePlayer(state: PlaybackState, favorite: Boolean, onToggle:
                                 )
                             })
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(time(position.toLong()), style = MaterialTheme.typography.labelMedium)
-                            Text(time(state.durationMs), style = MaterialTheme.typography.labelMedium)
+                            Text(time(position.toLong()), style = type.playbackTime)
+                            Text(time(state.durationMs), style = type.playbackTime)
                         }
                     }
                     BoxWithConstraints(Modifier.fillMaxWidth().padding(top = 8.dp)) {

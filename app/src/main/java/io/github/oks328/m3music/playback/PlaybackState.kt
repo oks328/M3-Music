@@ -21,4 +21,5 @@ data class PlaybackState(
     val shuffle: Boolean = false,
     val repeat: RepeatMode = RepeatMode.OFF,
     val queue: List<Track> = emptyList(),
+    val queueEntryIds: List<String> = emptyList(),
 )

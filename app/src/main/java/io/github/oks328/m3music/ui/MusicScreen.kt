@@ -12,15 +12,18 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
@@ -110,7 +113,18 @@ fun MusicScreen(
     var showAccount by rememberSaveable { mutableStateOf(false) }
     val tabState = rememberSaveableStateHolder()
     var expandedPlayer by rememberSaveable { mutableStateOf(false) }
-    var playerDragOffset by remember { mutableFloatStateOf(0f) }
+    val playerMotion = remember { PlayerContainerMotion(expandedPlayer) }
+    val playerScope = rememberCoroutineScope()
+    val playerSpring = MaterialTheme.motionScheme.defaultSpatialSpec<Float>()
+    val settlePlayer: (Boolean, Float) -> Unit = { open, velocity ->
+        expandedPlayer = open
+        playerMotion.settle(playerScope, open, playerSpring, velocity)
+    }
+    val overlayPresent by remember { derivedStateOf { playerMotion.progress > 0f } }
+    val showCompactFace by remember { derivedStateOf { playerMotion.progress < 0.45f } }
+    val playerFullyOpen by remember { derivedStateOf {
+        playerMotion.progress >= 0.999f && playerMotion.anchor != null
+    } }
     BackHandler(!showHome && !showAccount && !expandedPlayer) {
         if (destination == "Library" && librarySection != "YouTube Music") librarySection = "YouTube Music"
         else destination = "Home"
@@ -158,7 +172,7 @@ fun MusicScreen(
         artistChoices = emptyList()
         returnToPlayer = true
         openedCatalog = artist
-        expandedPlayer = false
+        settlePlayer(false, 0f)
     }
     var preparingCollection by remember { mutableStateOf<String?>(null) }
     val downloadCollection: (AccountItem, AccountPage, Boolean) -> Unit = { item, page, fromLibrary ->
@@ -207,16 +221,18 @@ fun MusicScreen(
     Box(Modifier.fillMaxSize()) {
     Scaffold(modifier = Modifier.fillMaxSize().imePadding(), snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
-            if (!expandedPlayer || playback.track == null || playerDragOffset > 0f) {
+            if (!expandedPlayer || playback.track == null || !playerFullyOpen) {
                 Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp),
                     contentAlignment = Alignment.Center) {
                     Column(Modifier.widthIn(max = 448.dp).fillMaxWidth().padding(bottom = 8.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         if (playback.track != null) {
-                            CompactPlayer(playback, onTogglePlayback, onNext = onNext, onExpand = {
-                                playerDragOffset = 0f
-                                expandedPlayer = true
-                            })
+                            CompactPlayer(playback, onTogglePlayback, onNext = onNext,
+                                onExpand = { settlePlayer(true, 0f) },
+                                modifier = Modifier.onGloballyPositioned { coordinates ->
+                                    playerMotion.anchor = Rect(coordinates.positionInRoot(), coordinates.size.toSize())
+                                }.graphicsLayer { alpha = if (playerMotion.progress > 0f) 0f else 1f }
+                                    .playerSwipe(playerMotion, expanded = false, settle = settlePlayer))
                         }
                         MusicBottomNavigation(destination) { label ->
                             openedCatalog = null
@@ -226,7 +242,7 @@ fun MusicScreen(
                 }
             }
         }) { insets ->
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Box(Modifier.fillMaxSize().musicContentFade(destination), contentAlignment = Alignment.TopCenter) {
         Column(Modifier.fillMaxHeight().padding(
             start = insets.calculateStartPadding(androidx.compose.ui.platform.LocalLayoutDirection.current),
             top = insets.calculateTopPadding(),
@@ -242,6 +258,13 @@ fun MusicScreen(
                 } else if (showHome) stringResource(R.string.app_name) else destination,
                     style = if (showHome) LocalMusicTypeStyles.current.brandTitle else MaterialTheme.typography.titleLarge)
             }
+                if (showAccountLibrary && openedCatalog == null && account.collection == null &&
+                    account.profile != null && !account.expired
+                ) {
+                    IconButton(onClick = accountActions.refresh, enabled = !account.loading && !account.mutating) {
+                        Icon(painterResource(R.drawable.ic_refresh), "Refresh account library")
+                    }
+                }
                 FilledTonalIconButton(onClick = { showAccount = true }, modifier = Modifier.size(48.dp)) {
                     Icon(painterResource(R.drawable.ic_account), "Account")
                 }
@@ -301,8 +324,7 @@ fun MusicScreen(
                     collectionDownload = { item, page -> collectionDownloadButton(item, page, false) },
                     onBack = {
                         openedCatalog = null
-                        playerDragOffset = 0f
-                        expandedPlayer = returnToPlayer && playback.track != null
+                        settlePlayer(returnToPlayer && playback.track != null, 0f)
                         returnToPlayer = false
                     }, modifier = Modifier.weight(1f).fillMaxWidth())
             } else if (showHome) {
@@ -312,10 +334,9 @@ fun MusicScreen(
                     modifier = Modifier.weight(1f).fillMaxWidth())
             } else if (showAccountLibrary) {
                 AccountPanel(account, accountActions, playbackConnected = playback.connected,
-                    onPlay = onPlay, onPlaySongs = onPlayPlaylist, onDownload = onDownload,
+                    onPlaySongs = onPlayPlaylist, onDownload = onDownload,
                     collectionDownload = { item, page -> collectionDownloadButton(item, page, true) },
                     candidates = (search.tracks + library.favorites + downloads.items.map { it.track } + library.history).distinctBy { it.id },
-                    recent = library.history,
                     playingTrackId = playback.track?.id,
                     bottomClearance = insets.calculateBottomPadding(),
                     modifier = Modifier.weight(1f).fillMaxWidth())
@@ -438,46 +459,63 @@ fun MusicScreen(
     if (showAccount) AccountSettingsDialog(account, accountActions, { showAccount = false })
     val currentTrack = playback.track
     if (currentTrack != null) {
-        BackHandler(expandedPlayer) { expandedPlayer = false }
-        val motion = MaterialTheme.motionScheme
-        AnimatedVisibility(
-            visible = expandedPlayer,
-            enter = slideInVertically(motion.defaultSpatialSpec()) { it },
-            exit = slideOutVertically(motion.defaultSpatialSpec()) { it },
-        ) {
-            Surface(Modifier.fillMaxSize().graphicsLayer { translationY = playerDragOffset },
-                color = MaterialTheme.colorScheme.surfaceContainerLow) {
-                Box(Modifier.statusBarsPadding()) {
-                    ExpressivePlayer(playback, library.favorites.any { it.id == currentTrack.id }, onTogglePlayback,
-                        onSeek, onRetryPlayback, onPrevious, onNext, onQueueItem,
-                        onMoveQueueItem = onMoveQueueItem,
-                        onFavorite = { onFavorite(currentTrack, library.favorites.none { it.id == currentTrack.id }) },
-                        onAddToPlaylist = { youtubeAddTrack = currentTrack },
-                        onDownload = { onDownload(currentTrack) },
-                        downloadEntry = downloads.items.firstOrNull { it.track.id == currentTrack.id },
-                        onShuffle = onShuffle, onRepeat = onRepeat, onClose = { expandedPlayer = false },
-                        onDragOffset = { playerDragOffset = it },
-                        onArtist = if (findTrackArtists == null && findArtist == null || lookingUpArtist) null else { name ->
-                            lookingUpArtist = true
-                            scope.launch {
-                                val artists = try {
-                                    findTrackArtists?.invoke(currentTrack) ?: listOfNotNull(findArtist?.invoke(name))
-                                } catch (cancelled: CancellationException) {
-                                    throw cancelled
-                                } catch (_: Exception) {
-                                    emptyList()
-                                } finally {
-                                    lookingUpArtist = false
+        BackHandler(expandedPlayer) { settlePlayer(false, 0f) }
+        if (expandedPlayer || overlayPresent) {
+            val colors = MaterialTheme.colorScheme
+            Box(Modifier.fillMaxSize().playerContainer(playerMotion, colors.secondaryContainer, colors.surfaceContainerLow)) {
+                Box(Modifier.fillMaxSize().graphicsLayer {
+                    val p = playerMotion.progress
+                    alpha = ((p - 0.24f) / 0.62f).coerceIn(0f, 1f)
+                    translationY = (playerMotion.anchor?.top ?: size.height) * (1f - p) * 0.58f
+                }.statusBarsPadding()) {
+                    CompositionLocalProvider(LocalContentColor provides colors.onSurface) {
+                        ExpressivePlayer(playback, library.favorites.any { it.id == currentTrack.id }, onTogglePlayback,
+                            onSeek, onRetryPlayback, onPrevious, onNext, onQueueItem,
+                            onMoveQueueItem = onMoveQueueItem,
+                            onFavorite = { onFavorite(currentTrack, library.favorites.none { it.id == currentTrack.id }) },
+                            onAddToPlaylist = { youtubeAddTrack = currentTrack },
+                            onDownload = { onDownload(currentTrack) },
+                            downloadEntry = downloads.items.firstOrNull { it.track.id == currentTrack.id },
+                            onShuffle = onShuffle, onRepeat = onRepeat, onClose = { settlePlayer(false, 0f) },
+                            swipeModifier = { enabled ->
+                                Modifier.playerSwipe(playerMotion, expandedPlayer, enabled, settlePlayer)
+                            },
+                            onArtist = if (findTrackArtists == null && findArtist == null || lookingUpArtist) null else { name ->
+                                lookingUpArtist = true
+                                scope.launch {
+                                    val artists = try {
+                                        findTrackArtists?.invoke(currentTrack) ?: listOfNotNull(findArtist?.invoke(name))
+                                    } catch (cancelled: CancellationException) {
+                                        throw cancelled
+                                    } catch (_: Exception) {
+                                        emptyList()
+                                    } finally {
+                                        lookingUpArtist = false
+                                    }
+                                    if (expandedPlayer) when (artists.size) {
+                                        0 -> playerSnackbar.showSnackbar("Couldn't open an artist page for $name.")
+                                        1 -> showPlayerArtist(artists.single())
+                                        else -> artistChoices = artists
+                                    }
                                 }
-                                if (expandedPlayer) when (artists.size) {
-                                    0 -> playerSnackbar.showSnackbar("Couldn't open an artist page for $name.")
-                                    1 -> showPlayerArtist(artists.single())
-                                    else -> artistChoices = artists
-                                }
-                            }
-                        })
+                            })
+                    }
                     SnackbarHost(playerSnackbar, Modifier.align(Alignment.BottomCenter)
                         .navigationBarsPadding().padding(bottom = 64.dp))
+                }
+                val mini = playerMotion.anchor
+                if (showCompactFace && mini != null) {
+                    val width = with(LocalDensity.current) { mini.width.toDp() }
+                    Box(Modifier.width(width).graphicsLayer {
+                        val p = playerMotion.progress
+                        translationX = mini.left * (1f - p)
+                        translationY = mini.top * (1f - p)
+                        alpha = (1f - p / 0.38f).coerceIn(0f, 1f)
+                    }.clearAndSetSemantics {}) {
+                        CompactPlayer(playback, onToggle = {}, onNext = {}, onExpand = {},
+                            modifier = Modifier.playerSwipe(playerMotion, expandedPlayer, settle = settlePlayer),
+                            inTransform = true)
+                    }
                 }
             }
         }
@@ -552,7 +590,7 @@ internal fun SongRow(track: Track, selected: Boolean, enabled: Boolean, offline:
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (track.durationSeconds > 0) {
-                Text(formatTime(track.durationSeconds * 1000), style = MaterialTheme.typography.labelMedium)
+                Text(formatTime(track.durationSeconds * 1000), style = LocalMusicTypeStyles.current.playbackTime)
             }
         }
     }

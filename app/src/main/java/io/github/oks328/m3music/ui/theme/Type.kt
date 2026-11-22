@@ -68,8 +68,10 @@ internal class MusicTypeStyles private constructor(private val assets: AssetMana
     )
 
     val brandTitle = baseline.titleLarge.heading1()
-    val selectedNavigationLabel = baseline.labelMedium.googleSans(735, 101f, -2f, 78f)
-    val compactTrackTitle = baseline.titleMedium.googleSans(690, 98f, 0f, 56f)
+    val selectedNavigationLabel = baseline.labelMedium.googleSans(650, 98f, 0f, 48f)
+    val compactTrackTitle = baseline.titleMedium.googleSans(650, 98f, 0f, 43f)
+    val expandedTrackTitle = baseline.headlineMedium.heading2()
+    val playbackTime = typography.labelMedium.copy(fontFeatureSettings = "tnum")
     val condensedPlayerTitle = baseline.headlineSmall.heading3()
 }
 

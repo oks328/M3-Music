@@ -26,7 +26,8 @@ class AccountScreenTest {
                 onPlayPlaylist = { tracks, index -> assertEquals(listOf(song), tracks); assertEquals(0, index); plays++ })
         } }
         compose.onNodeWithText("Library").performClick()
-        compose.onNodeWithContentDescription("Play liked songs").performClick()
+        compose.onNodeWithText("Liked songs").performClick()
+        compose.onNodeWithText("Play liked songs").performClick()
         compose.runOnIdle { assertEquals(0, plays); state = state.copy(loading = false,
             page = AccountPage(listOf(AccountItem(song.id, song.title, kind = AccountItemKind.SONG, track = song)))) }
         compose.waitForIdle()
@@ -83,7 +84,7 @@ class AccountScreenTest {
         compose.runOnIdle { assertTrue(refreshed); assertEquals(playlist, opened) }
     }
 
-    @Test fun libraryLikedSongsShortcutLoadsTheAccountCategory() {
+    @Test fun libraryLikedSongsFilterLoadsTheAccountCategory() {
         var category: AccountCategory? = null
         compose.setContent { M3MusicTheme {
             MusicScreen(SearchState(), PlaybackState(connected = true), {}, {}, {}, {}, {},
@@ -91,7 +92,7 @@ class AccountScreenTest {
                 accountActions = AccountActions(category = { category = it }))
         } }
         compose.onNodeWithText("Library").performClick()
-        compose.onNodeWithText("Your liked songs").performClick()
+        compose.onNodeWithText("Liked songs").performClick()
         compose.runOnIdle { assertEquals(AccountCategory.LIKED_SONGS, category) }
     }
     @Test fun newLibraryPlaylistUsesYouTubeMusic() {

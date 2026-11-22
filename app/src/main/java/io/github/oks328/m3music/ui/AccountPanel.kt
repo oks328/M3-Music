@@ -7,7 +7,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.text.style.TextOverflow
@@ -45,12 +44,10 @@ internal fun AccountPanel(
     state: AccountState,
     actions: AccountActions,
     playbackConnected: Boolean,
-    onPlay: (Track) -> Unit,
     onPlaySongs: (List<Track>, Int) -> Unit,
     onDownload: (Track) -> Unit,
     collectionDownload: @Composable (AccountItem, AccountPage) -> Unit,
     candidates: List<Track>,
-    recent: List<Track> = emptyList(),
     showSettings: Boolean = false,
     onDismissSettings: () -> Unit = {},
     playingTrackId: String? = null,
@@ -110,7 +107,7 @@ internal fun AccountPanel(
             state.error, onAdd = addSong, onBack = { adding = false }, bottomClearance = bottomClearance, modifier = modifier)
         return
     }
-    LazyColumn(modifier.fillMaxWidth(), state = listState, verticalArrangement = Arrangement.spacedBy(12.dp),
+    LazyColumn(modifier.fillMaxWidth(), state = listState, verticalArrangement = Arrangement.spacedBy(if (collection == null) 4.dp else 12.dp),
         contentPadding = PaddingValues(bottom = 16.dp + bottomClearance)) {
         when {
             state.initializing -> item { LinearWavyProgressIndicator(Modifier.fillMaxWidth()) }
@@ -131,16 +128,16 @@ internal fun AccountPanel(
                     Text("Your session has expired. Reconnect to load account music.", color = MaterialTheme.colorScheme.error)
                     Button(onClick = actions.signIn) { Text("Reconnect Google account") }
                 } else {
-                    if (collection == null && state.category == AccountCategory.PLAYLISTS) {
-                        item { Text("Your music", style = MaterialTheme.typography.displaySmall) }
-                        item { HomeIntro(onLiked = { actions.category(AccountCategory.LIKED_SONGS) },
-                            onPlayLiked = { playLikedWhenLoaded = true; actions.category(AccountCategory.LIKED_SONGS) }, canPlay = playbackConnected) }
-                    }
                     if (collection == null) item {
-                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             AccountCategory.entries.forEach { category ->
                                 FilterChip(selected = state.category == category,
-                                    onClick = { playLikedWhenLoaded = false; actions.category(category) }, label = { Text(category.label) })
+                                    onClick = { playLikedWhenLoaded = false; actions.category(category) },
+                                    label = {
+                                        Text(if (category == AccountCategory.ARTISTS) "Artists" else category.label,
+                                            style = MaterialTheme.typography.labelMedium)
+                                    })
                             }
                         }
                     }
@@ -153,15 +150,23 @@ internal fun AccountPanel(
                                 { collectionDownload(collection, page) }
                             } else null)
                     }
-                    else item {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text(if (state.category == AccountCategory.PLAYLISTS) "Your playlists" else state.category.label,
-                                style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
-                            if (state.category == AccountCategory.PLAYLISTS) TextButton(onClick = { name = ""; naming = true }, enabled = !state.mutating) { Text("New playlist") }
-                            IconButton(onClick = actions.refresh, enabled = !state.loading && !state.mutating) {
-                                Icon(painterResource(R.drawable.ic_refresh), "Refresh account library")
+                    else when (state.category) {
+                        AccountCategory.PLAYLISTS -> item {
+                            FilledTonalButton(onClick = { name = ""; naming = true }, enabled = !state.mutating) {
+                                Icon(painterResource(R.drawable.ic_add_playlist), null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("New playlist")
                             }
                         }
+                        AccountCategory.LIKED_SONGS -> item {
+                            FilledTonalButton(onClick = { playLikedWhenLoaded = true },
+                                enabled = playbackConnected && (state.loading || page.items.any { it.track != null })) {
+                                Icon(painterResource(R.drawable.ic_play), null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Play liked songs")
+                            }
+                        }
+                        else -> Unit
                     }
                     if (editable) item {
                         FilledTonalButton(onClick = { adding = true }, enabled = !state.mutating,
@@ -181,11 +186,9 @@ internal fun AccountPanel(
                             else if (editable) "No songs in this playlist yet."
                             else "No songs are available in this collection.")
                     }
-                    if (collection == null && state.category == AccountCategory.PLAYLISTS && page.items.isNotEmpty()) {
-                        item {
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                items(page.items, key = { it.key }) { entry -> CollectionCard(entry, { actions.open(entry) }, Modifier.width(176.dp)) }
-                            }
+                    if (collection == null && page.items.isNotEmpty() && page.items.all { it.track == null }) {
+                        items(page.items, key = { it.key }) { entry ->
+                            AccountLibraryRow(entry, onClick = { actions.open(entry) })
                         }
                     } else if (page.items.isNotEmpty() && page.items.all { it.track == null }) {
                         items(page.items.chunked(2), key = { it.first().key }) { pair ->
@@ -230,9 +233,6 @@ internal fun AccountPanel(
                             }
                         }
                     }
-                    if (collection == null && state.category == AccountCategory.PLAYLISTS && recent.isNotEmpty()) item {
-                        RecentShelf(recent, playbackConnected, onPlay)
-                    }
                 }
             }
         }
@@ -256,4 +256,24 @@ internal fun AccountPanel(
             collection?.let { actions.perform(AccountAction.RemoveSong(it.id, target.id, requireNotNull(target.setVideoId))) }
             removing = null
         }) { Text("Remove on YouTube") } }, dismissButton = { TextButton(onClick = { removing = null }) { Text("Cancel") } }) }
+}
+
+@Composable
+private fun AccountLibraryRow(entry: AccountItem, onClick: () -> Unit) {
+    Surface(onClick = onClick, modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface) {
+        Row(Modifier.padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Artwork(entry.artworkUrl, Modifier.size(52.dp),
+                cornerRadius = if (entry.kind == AccountItemKind.ARTIST) 26.dp else 10.dp)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(entry.title, style = MaterialTheme.typography.titleMedium,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (entry.subtitle.isNotBlank()) {
+                    Text(entry.subtitle, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+    }
 }
