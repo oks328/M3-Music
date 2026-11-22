@@ -37,6 +37,8 @@ class LibraryPlaybackIntegrationTest {
             var originalIndex = 0
             var originalPosition = 0L
             var originalPlaying = false
+            var originalShuffle = false
+            var originalRepeat = 0
             var captured = false
             try {
                 val saved = withTimeout(15_000) { model.downloads.first { !it.loading } }.items
@@ -50,7 +52,11 @@ class LibraryPlaybackIntegrationTest {
                     originalIndex = controller.currentMediaItemIndex.coerceAtLeast(0)
                     originalPosition = controller.currentPosition.coerceAtLeast(0)
                     originalPlaying = controller.playWhenReady
+                    originalShuffle = controller.shuffleModeEnabled
+                    originalRepeat = controller.repeatMode
                     captured = true
+                    controller.shuffleModeEnabled = false
+                    controller.repeatMode = androidx.media3.common.Player.REPEAT_MODE_OFF
                     controller.volume = 0f
                     model.playPlaylist(listOf(song, song), 0)
                 }
@@ -65,6 +71,27 @@ class LibraryPlaybackIntegrationTest {
                 activity.onActivity { model.seek(3000) }
                 val sought = withTimeout(10_000) { model.playback.first { it.queueIndex == 1 && it.positionMs in 2500..10000 && it.playing } }
                 assertTrue(sought.offline)
+                activity.onActivity { model.toggleShuffle() }
+                withTimeout(10_000) { model.playback.first { it.shuffle } }
+                activity.onActivity { model.toggleShuffle() }
+                withTimeout(10_000) { model.playback.first { !it.shuffle } }
+                for (mode in listOf(io.github.oks328.m3music.playback.RepeatMode.ALL,
+                    io.github.oks328.m3music.playback.RepeatMode.ONE,
+                    io.github.oks328.m3music.playback.RepeatMode.OFF)) {
+                    activity.onActivity { model.cycleRepeat() }
+                    withTimeout(10_000) { model.playback.first { it.repeat == mode } }
+                }
+                val extra = model.downloads.value.items.firstOrNull {
+                    it.status == DownloadStatus.COMPLETED && it.track.id != song.id
+                }?.track
+                if (extra != null) {
+                    activity.onActivity { model.enqueue(extra) }
+                    withTimeout(10_000) { model.playback.first { it.queue.size == 3 } }
+                    activity.onActivity { model.moveQueueItem(2, 0) }
+                    val reordered = withTimeout(10_000) { model.playback.first { it.queue.firstOrNull()?.id == extra.id } }
+                    assertEquals(listOf(extra.id, song.id, song.id), reordered.queue.map { it.id })
+                    assertEquals(song.id, reordered.track?.id)
+                }
                 val history = withTimeout(10_000) { model.library.first { it.history.any { track -> track.id == song.id } } }
                 assertEquals(1, history.history.count { it.id == song.id })
             } finally {
@@ -76,6 +103,8 @@ class LibraryPlaybackIntegrationTest {
                             controller.prepare()
                             controller.playWhenReady = originalPlaying
                         }
+                        controller.shuffleModeEnabled = originalShuffle
+                        controller.repeatMode = originalRepeat
                         controller.volume = originalVolume
                     }
                     MediaController.releaseFuture(future)

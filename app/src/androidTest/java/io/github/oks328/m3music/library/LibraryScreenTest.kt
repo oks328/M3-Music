@@ -15,7 +15,7 @@ class LibraryScreenTest {
     @get:Rule val compose = createComposeRule()
     private val track = Track("abcdefghijk", "A song", "An artist", null, 180)
 
-    @Test fun aPlaylistCanBeCreatedFromTheLibrary() {
+    @Test fun aLocalPlaylistCanBeCreatedOnDevice() {
         var name = ""
         compose.setContent {
             M3MusicTheme {
@@ -24,23 +24,26 @@ class LibraryScreenTest {
             }
         }
         compose.onNodeWithText("Library").performClick()
+        compose.onNodeWithText("On device").performClick()
         compose.onNodeWithText("New playlist").performClick()
         compose.onNodeWithText("Playlist name").performTextInput("Road trip")
         compose.onNodeWithText("Create").performClick()
         compose.runOnIdle { assertEquals("Road trip", name) }
     }
 
-    @Test fun searchResultCanBeFavoritedAndAddedToPlaylist() {
+    @Test fun historySongCanBeFavoritedAndAddedToLocalPlaylist() {
         var favorite: Boolean? = null
         var added: Track? = null
         compose.setContent {
             M3MusicTheme {
-                MusicScreen(SearchState(tracks = listOf(track), hasSearched = true), PlaybackState(connected = true), {}, {}, {}, {}, {},
-                    library = LibraryState(playlists = listOf(LocalPlaylist("list", "Road trip")), loading = false),
+                MusicScreen(SearchState(), PlaybackState(connected = true), {}, {}, {}, {}, {},
+                    library = LibraryState(playlists = listOf(LocalPlaylist("list", "Road trip")), history = listOf(track), loading = false),
                     onFavorite = { _, value -> favorite = value }, onAddToPlaylist = { _, value -> added = value })
             }
         }
-        compose.onNodeWithText("Search").performClick()
+        compose.onNodeWithText("Library").performClick()
+        compose.onNodeWithText("On device").performClick()
+        compose.onNodeWithText("History").performClick()
         compose.onNodeWithContentDescription("Favorite A song").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(true, favorite) }
         compose.onNodeWithContentDescription("Add A song to playlist").performScrollTo().performClick()
@@ -58,7 +61,10 @@ class LibraryScreenTest {
             }
         }
         compose.onNodeWithText("Library").performClick()
+        compose.onNodeWithText("On device").performClick()
         compose.onNodeWithText("Road trip").performClick()
+        compose.onNodeWithText("Search").performClick()
+        compose.onNodeWithText("Library").performClick()
         compose.onNodeWithText("Play playlist").performClick()
         compose.runOnIdle { assertEquals(listOf(track), selected) }
     }
@@ -73,6 +79,7 @@ class LibraryScreenTest {
             }
         }
         compose.onNodeWithText("Library").performClick()
+        compose.onNodeWithText("On device").performClick()
         compose.onNodeWithText("Road trip").performClick()
         compose.onNodeWithText("Delete", useUnmergedTree = true).performClick()
         compose.runOnIdle { assertNull(deleted) }

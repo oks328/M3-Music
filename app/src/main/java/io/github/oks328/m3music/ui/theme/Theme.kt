@@ -6,6 +6,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 
 private val Light = lightColorScheme(
     primary = Color(0xFF465D09), onPrimary = Color.White, primaryContainer = Color(0xFFD5ED79), onPrimaryContainer = Color(0xFF253200),
@@ -33,6 +34,8 @@ val LocalMusicAppearance = staticCompositionLocalOf { MusicAppearance() }
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 fun M3MusicTheme(darkTheme: Boolean = isSystemInDarkTheme(), dynamicColor: Boolean? = null, content: @Composable () -> Unit) {
     val context = LocalContext.current
+    val density = LocalDensity.current
+    val type = remember(context.assets, density) { MusicTypeStyles.get(context.assets, density) }
     val preferences = remember { context.getSharedPreferences("appearance", android.content.Context.MODE_PRIVATE) }
     var useWallpaper by remember { mutableStateOf(preferences.getBoolean("wallpaperColors", true)) }
     val dynamic = dynamicColor ?: useWallpaper
@@ -41,7 +44,7 @@ fun M3MusicTheme(darkTheme: Boolean = isSystemInDarkTheme(), dynamicColor: Boole
     } else if (darkTheme) Dark else Light
     CompositionLocalProvider(LocalMusicAppearance provides MusicAppearance(dynamic) {
         useWallpaper = it; preferences.edit().putBoolean("wallpaperColors", it).apply()
-    }) {
-        MaterialExpressiveTheme(colorScheme = colors, motionScheme = MotionScheme.expressive(), typography = Typography, content = content)
+    }, LocalMusicTypeStyles provides type) {
+        MaterialExpressiveTheme(colorScheme = colors, motionScheme = MotionScheme.expressive(), typography = type.typography, content = content)
     }
 }

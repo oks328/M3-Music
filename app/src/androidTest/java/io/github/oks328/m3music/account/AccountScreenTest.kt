@@ -16,7 +16,7 @@ import androidx.compose.runtime.setValue
 class AccountScreenTest {
     @get:Rule val compose = createComposeRule()
 
-    @Test fun homePlaybackWaitsForLikedSongsAndStartsOnlyOnce() {
+    @Test fun libraryPlaybackWaitsForLikedSongsAndStartsOnlyOnce() {
         val song = io.github.oks328.m3music.music.Track("abcdefghijk", "A liked song", "Artist", null, 180)
         var state by androidx.compose.runtime.mutableStateOf(AccountState(initializing = false, profile = AccountProfile("Listener")))
         var plays = 0
@@ -25,6 +25,7 @@ class AccountScreenTest {
                 accountActions = AccountActions(category = { state = state.copy(category = it, loading = true, page = AccountPage()) }),
                 onPlayPlaylist = { tracks, index -> assertEquals(listOf(song), tracks); assertEquals(0, index); plays++ })
         } }
+        compose.onNodeWithText("Library").performClick()
         compose.onNodeWithContentDescription("Play liked songs").performClick()
         compose.runOnIdle { assertEquals(0, plays); state = state.copy(loading = false,
             page = AccountPage(listOf(AccountItem(song.id, song.title, kind = AccountItemKind.SONG, track = song)))) }
@@ -39,6 +40,7 @@ class AccountScreenTest {
             MusicScreen(SearchState(), PlaybackState(connected = true), {}, {}, {}, {}, {},
                 accountActions = AccountActions(signIn = { clicked = true }))
         } }
+        compose.onNodeWithText("Library").performClick()
         compose.onNodeWithText("Connect Google account").performScrollTo().performClick()
         compose.runOnIdle { assertTrue(clicked) }
     }
@@ -48,6 +50,7 @@ class AccountScreenTest {
                 initializing = false, profile = AccountProfile("Listener"), expired = true,
                 page = AccountPage(listOf(AccountItem("VLprivate", "Private playlist", kind = AccountItemKind.PLAYLIST)))))
         } }
+        compose.onNodeWithText("Library").performClick()
         compose.onNodeWithText("Reconnect Google account").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Private playlist").assertDoesNotExist()
     }
@@ -64,7 +67,7 @@ class AccountScreenTest {
         compose.onNodeWithText("Disconnect", useUnmergedTree = true).performClick()
         compose.runOnIdle { assertTrue(disconnected) }
     }
-    @Test fun signedInHomeShowsAccountMusicBeforeSearch() {
+    @Test fun signedInLibraryShowsAccountMusic() {
         var refreshed = false
         var opened: AccountItem? = null
         val playlist = AccountItem("VLtest", "My listening collection", kind = AccountItemKind.PLAYLIST)
@@ -73,20 +76,35 @@ class AccountScreenTest {
                 account = AccountState(initializing = false, profile = AccountProfile("Listener"), page = AccountPage(listOf(playlist))),
                 accountActions = AccountActions(refresh = { refreshed = true }, open = { opened = it }))
         } }
-        compose.onNodeWithText("Home").assertIsSelected()
-        compose.onNodeWithText("Songs or artists").assertDoesNotExist()
+        compose.onNodeWithText("Library").performClick()
+        compose.onNode(hasText("Library") and hasClickAction()).assertIsSelected()
+        compose.onNodeWithText("Songs, albums, or artists").assertDoesNotExist()
         compose.onNodeWithText("My listening collection").performScrollTo().performClick()
         compose.runOnIdle { assertTrue(refreshed); assertEquals(playlist, opened) }
     }
 
-    @Test fun homeLikedSongsShortcutLoadsTheAccountCategory() {
+    @Test fun libraryLikedSongsShortcutLoadsTheAccountCategory() {
         var category: AccountCategory? = null
         compose.setContent { M3MusicTheme {
             MusicScreen(SearchState(), PlaybackState(connected = true), {}, {}, {}, {}, {},
                 account = AccountState(initializing = false, profile = AccountProfile("Listener")),
                 accountActions = AccountActions(category = { category = it }))
         } }
+        compose.onNodeWithText("Library").performClick()
         compose.onNodeWithText("Your liked songs").performClick()
         compose.runOnIdle { assertEquals(AccountCategory.LIKED_SONGS, category) }
+    }
+    @Test fun newLibraryPlaylistUsesYouTubeMusic() {
+        var action: AccountAction? = null
+        compose.setContent { M3MusicTheme {
+            MusicScreen(SearchState(), PlaybackState(connected = true), {}, {}, {}, {}, {},
+                account = AccountState(initializing = false, profile = AccountProfile("Listener")),
+                accountActions = AccountActions(perform = { action = it }))
+        } }
+        compose.onNodeWithText("Library").performClick()
+        compose.onNodeWithText("New playlist").performScrollTo().performClick()
+        compose.onNodeWithText("YouTube playlist name").performTextInput("Road trip")
+        compose.onNodeWithText("Create on YouTube").performClick()
+        compose.runOnIdle { assertEquals(AccountAction.CreatePlaylist("Road trip"), action) }
     }
 }

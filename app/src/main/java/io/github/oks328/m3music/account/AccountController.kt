@@ -1,6 +1,9 @@
 package io.github.oks328.m3music.account
 
+import io.github.oks328.m3music.music.Track
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -116,6 +119,55 @@ internal class AccountController(
         mutableState.value = state.value.copy(collection = null, detail = AccountPage(), loading = false, error = null)
     }
 
+    suspend fun discovery(): List<DiscoveryShelf> = discover(gateway::discovery)
+
+    suspend fun discoveryCollection(id: String): AccountPage =
+        discover { gateway.discoveryCollection(it, id) }
+
+    suspend fun collectionTracks(id: String, first: AccountPage, fromLibrary: Boolean): List<Track> {
+        val stamp = generation
+        val active = session?.takeUnless { state.value.expired }
+        if (fromLibrary && active == null) throw AccountSessionExpired()
+        val songs = linkedMapOf<String, Track>()
+        val visited = mutableSetOf<String>()
+        var page = first
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            if (stamp != generation) throw CancellationException("Account changed")
+            val album = if (id.startsWith("MPRE")) page.copy(
+                artworkUrl = first.artworkUrl ?: page.artworkUrl,
+                albumArtist = first.albumArtist ?: page.albumArtist,
+            ) else null
+            page.items.mapNotNull { it.track }.forEach { track ->
+                val song = album?.fillAlbumCredits(track) ?: track
+                songs.putIfAbsent(song.id, song)
+            }
+            val token = page.continuation ?: return songs.values.toList()
+            if (!visited.add(token)) throw AccountResponseChanged()
+            page = if (active == null) gateway.discoveryCollection(null, id, token)
+            else gateway.browse(active, id, token)
+        }
+    }
+
+    private suspend fun <T> discover(load: suspend (AccountSession?) -> T): T {
+        val active = session?.takeUnless { state.value.expired } ?: throw AccountSessionExpired()
+        return try {
+            load(active)
+        } catch (expired: AccountSessionExpired) {
+            if (active === session) showFailure(expired)
+            throw expired
+        }
+    }
+
+    suspend fun playlistSuggestions(id: String, token: String?): List<Track> {
+        val active = session?.takeUnless { state.value.expired } ?: return emptyList()
+        val suggested = token?.let { gateway.playlistSuggestions(active, id, it) }.orEmpty()
+        val songs = suggested.ifEmpty {
+            gateway.discovery(active).flatMap { shelf -> shelf.items.mapNotNull { it.track } }.distinctBy { it.id }
+        }
+        return if (active === session && !state.value.expired) songs else emptyList()
+    }
+
     fun refresh() = fetch(false)
     fun loadMore() = fetch(true)
     fun dismissMessage() { mutableState.value = state.value.copy(message = null) }
@@ -137,24 +189,48 @@ internal class AccountController(
                 currentCoroutineContext().ensureActive()
                 if (stamp != generation || ticket != request) return@launch
                 val combined = if (append) AccountPage((page.items + next.items).distinctBy { it.key },
-                    next.continuation?.takeUnless { it == continuation }, page.editable || next.editable) else next
+                    next.continuation?.takeUnless { it == continuation }, page.editable || next.editable,
+                    page.artworkUrl ?: next.artworkUrl, page.albumArtist ?: next.albumArtist,
+                    suggestionsToken = page.suggestionsToken ?: next.suggestionsToken) else next
                 mutableState.value = if (before.collection == null) state.value.copy(page = combined, loading = false)
-                    else state.value.copy(detail = combined, loading = false)
+                    else state.value.copy(detail = combined.withAlbumMetadata(before.collection), loading = false)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { if (stamp == generation && ticket == request) showFailure(failure) }
         }
     }
 
+    suspend fun editablePlaylists(continuation: String?): AccountPage {
+        val active = session?.takeUnless { state.value.expired } ?: throw AccountSessionExpired()
+        val stamp = generation
+        return try {
+            val page = gateway.browse(active, AccountCategory.PLAYLISTS.browseId, continuation)
+            if (stamp != generation) throw CancellationException("Account changed")
+            page.copy(items = page.items.filter { it.kind == AccountItemKind.PLAYLIST && it.editable })
+        } catch (expired: AccountSessionExpired) {
+            if (stamp == generation) showFailure(expired)
+            throw expired
+        }
+    }
+
+    suspend fun savePlaylistTrack(playlist: AccountItem, track: Track): Boolean {
+        if (!playlist.editable || playlist.kind != AccountItemKind.PLAYLIST) return false
+        return startWrite(AccountAction.AddSong(playlist.id, track.id))?.await() ?: false
+    }
+
     fun perform(action: AccountAction) {
-        val active = session ?: return
-        if (state.value.expired || state.value.mutating) return
+        startWrite(action)
+    }
+
+    private fun startWrite(action: AccountAction): Deferred<Boolean>? {
+        val active = session ?: return null
+        if (state.value.expired || state.value.mutating) return null
         val stamp = generation
         browseJob?.cancel(); request++
         mutableState.value = state.value.copy(mutating = true, loading = false, error = null, message = null)
-        scope.launch {
+        return scope.async {
             try {
                 gateway.perform(active, action)
-                if (stamp != generation) return@launch
+                if (stamp != generation) return@async false
                 mutableState.value = state.value.copy(mutating = false, message = "YouTube Music updated.")
                 when (action) {
                     is AccountAction.CreatePlaylist -> loadCategory(AccountCategory.PLAYLISTS)
@@ -166,8 +242,12 @@ internal class AccountController(
                     }
                     else -> refresh()
                 }
+                true
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (failure: Exception) { if (stamp == generation) showFailure(failure, writing = true) }
+            catch (failure: Exception) {
+                if (stamp == generation) showFailure(failure, writing = true)
+                false
+            }
         }
     }
 

@@ -17,6 +17,8 @@ import io.github.oks328.m3music.music.AudioSource
 import io.github.oks328.m3music.music.Track
 import io.github.oks328.m3music.music.YouTubeMusicRepository
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
@@ -32,10 +34,14 @@ class OfflineDownloads private constructor(private val context: Context) {
         DefaultHttpDataSource.Factory().setConnectTimeoutMs(15_000).setReadTimeoutMs(30_000),
         Executor { it.run() })
     private val ready = CompletableDeferred<Unit>()
-    private val mutableState = MutableStateFlow(DownloadsState(wifiOnly = preferences.getBoolean("wifiOnly", true)))
+    private val mutableState = MutableStateFlow(DownloadsState(
+        wifiOnly = preferences.getBoolean("wifiOnly", true),
+        albums = DownloadMetadata.decodeAlbums(preferences.getString("albums", null)),
+    ))
     val state = mutableState.asStateFlow()
     private val preparing = linkedMapOf<String, Track>()
     private val preparationJobs = mutableMapOf<String, Job>()
+    private val sourceSlots = Semaphore(2)
     private var refreshJob: Job? = null
 
     init {
@@ -61,6 +67,18 @@ class OfflineDownloads private constructor(private val context: Context) {
         }
     }
 
+    fun downloadAlbum(album: DownloadedAlbum, tracks: List<Track>) {
+        if (tracks.isEmpty()) return
+        val albums = listOf(album) + mutableState.value.albums.filterNot { it.id == album.id }
+        preferences.edit().putString("albums", DownloadMetadata.encodeAlbums(albums)).apply()
+        mutableState.value = mutableState.value.copy(albums = albums)
+        download(tracks)
+    }
+
+    fun download(tracks: List<Track>) {
+        tracks.distinctBy { it.id }.forEach(::download)
+    }
+
     fun download(track: Track) {
         if (track.id in preparing || mutableState.value.items.any {
                 it.track.id == track.id && it.status != DownloadStatus.FAILED
@@ -71,8 +89,11 @@ class OfflineDownloads private constructor(private val context: Context) {
             items = mutableState.value.items.filterNot { it.track.id == track.id } + DownloadEntry(track, DownloadStatus.PREPARING))
         preparationJobs[track.id] = scope.launch {
             try {
-                val source = YouTubeMusicRepository.resolve(track.id)
-                if (restarting) withContext(Dispatchers.IO) { cache.removeResource(track.id) }
+                ready.await()
+                val persisted = withContext(Dispatchers.IO) { manager.downloadIndex.getDownload(track.id) }
+                if (persisted != null && persisted.state != Download.STATE_FAILED) return@launch
+                val source = sourceSlots.withPermit { YouTubeMusicRepository.resolve(track.id) }
+                if (restarting || persisted?.state == Download.STATE_FAILED) withContext(Dispatchers.IO) { cache.removeResource(track.id) }
                 ensureActive()
                 val request = DownloadRequest.Builder(track.id, Uri.parse(source.url))
                     .setCustomCacheKey(track.id).setMimeType(source.mimeType)

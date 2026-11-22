@@ -30,6 +30,7 @@ class CollectionScreenTest {
             MusicScreen(SearchState(), PlaybackState(connected = true), {}, {}, {}, {}, {}, account = state(),
                 onPlayPlaylist = { songs, index -> queue = songs; start = index })
         } }
+        compose.onNodeWithText("Library").performClick()
         compose.onNodeWithText("Play").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(tracks, queue); assertEquals(0, start) }
         compose.onNodeWithText("Shuffle").performClick()
@@ -41,6 +42,7 @@ class CollectionScreenTest {
         compose.setContent { M3MusicTheme {
             MusicScreen(SearchState(), PlaybackState(connected = true), {}, {}, {}, {}, {}, account = current)
         } }
+        compose.onNodeWithText("Library").performClick()
         compose.onNodeWithText("Play loaded").performScrollTo().assertIsEnabled()
         compose.runOnIdle { current = state(empty = true) }
         compose.onNodeWithText("Play").performScrollTo().assertIsNotEnabled()
@@ -52,6 +54,7 @@ class CollectionScreenTest {
         compose.setContent { M3MusicTheme {
             MusicScreen(SearchState(), PlaybackState(connected = true), {}, {}, {}, {}, {}, account = album)
         } }
+        compose.onNodeWithText("Library").performClick()
         compose.onNodeWithContentDescription("Collection options").performClick()
         compose.onNodeWithText("Refresh collection").assertIsDisplayed()
         compose.onNodeWithText("Rename on YouTube").assertDoesNotExist()
@@ -64,10 +67,50 @@ class CollectionScreenTest {
             MusicScreen(SearchState(), PlaybackState(connected = true), {}, {}, {}, {}, {}, account = state(editable = true),
                 accountActions = AccountActions(perform = { action = it }))
         } }
+        compose.onNodeWithText("Library").performClick()
         compose.onNodeWithContentDescription("More options for First song").performScrollTo().performClick()
         compose.onNodeWithText("Remove from YouTube playlist").performClick()
         compose.runOnIdle { assertNull(action) }
         compose.onNodeWithText("Remove on YouTube").performClick()
         compose.runOnIdle { assertEquals(AccountAction.RemoveSong("VLtest", tracks[0].id, "set-${tracks[0].id}"), action) }
+    }
+    @Test fun playlistDownloadQueuesSongsFromLaterPages() {
+        val extra = Track("zyxwvutsrqp", "Later song", "Artist", null, 125)
+        var queued = emptyList<Track>()
+        compose.setContent { M3MusicTheme {
+            MusicScreen(SearchState(), PlaybackState(connected = true), {}, {}, {}, {}, {},
+                account = state(more = true),
+                loadCollectionTracks = { id, page, fromLibrary ->
+                    assertEquals("VLtest", id)
+                    assertEquals("next-page", page.continuation)
+                    assertTrue(fromLibrary)
+                    tracks + extra
+                },
+                onDownloadTracks = { queued = it })
+        } }
+        compose.onNodeWithText("Library").performClick()
+        compose.onNodeWithContentDescription("Download playlist").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(tracks + extra, queued) }
+    }
+    @Test fun editablePlaylistShowsSuggestionsAndSearchAddsToTheOpenPlaylist() {
+        var action: AccountAction? = null
+        compose.setContent { M3MusicTheme {
+            MusicScreen(SearchState(), PlaybackState(connected = true), {}, {}, {}, {}, {},
+                account = state(editable = true, empty = true),
+                accountActions = AccountActions(suggestions = { _, _ -> listOf(tracks.first()) },
+                    searchSongs = { listOf(tracks.last()) }, perform = { action = it }))
+        } }
+        compose.onNodeWithText("Library").performClick()
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Suggestions"))
+        compose.onNodeWithText("Suggestions").assertIsDisplayed()
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Add a song"))
+        compose.onNodeWithText("Add a song", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("Search songs").performTextInput("Second")
+        compose.onNodeWithContentDescription("Submit song search").performClick()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithContentDescription("Add Second song to playlist").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithContentDescription("Add Second song to playlist").performClick()
+        compose.runOnIdle { assertEquals(AccountAction.AddSong("VLtest", tracks.last().id), action) }
     }
 }

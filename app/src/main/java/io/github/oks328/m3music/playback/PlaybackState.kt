@@ -2,6 +2,8 @@ package io.github.oks328.m3music.playback
 
 import io.github.oks328.m3music.music.Track
 
+enum class RepeatMode { OFF, ALL, ONE }
+
 data class PlaybackState(
     val connected: Boolean = false,
     val track: Track? = null,
@@ -16,5 +18,7 @@ data class PlaybackState(
     val canNext: Boolean = false,
     val queueIndex: Int = 0,
     val queueSize: Int = 0,
+    val shuffle: Boolean = false,
+    val repeat: RepeatMode = RepeatMode.OFF,
     val queue: List<Track> = emptyList(),
 )

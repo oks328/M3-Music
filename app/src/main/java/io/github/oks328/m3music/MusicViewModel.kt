@@ -18,14 +18,12 @@ import io.github.oks328.m3music.music.Track
 import io.github.oks328.m3music.music.YouTubeMusicRepository
 import io.github.oks328.m3music.playback.PlaybackService
 import io.github.oks328.m3music.playback.PlaybackState
-import io.github.oks328.m3music.playback.PlaybackResolver
+import io.github.oks328.m3music.playback.RepeatMode
 import io.github.oks328.m3music.downloads.OfflineDownloads
+import io.github.oks328.m3music.downloads.DownloadedAlbum
 import io.github.oks328.m3music.downloads.DownloadStatus
 import io.github.oks328.m3music.library.LocalLibrary
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -35,13 +33,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val library = localLibrary.state
     private val offlineDownloads = OfflineDownloads.get(application)
     val downloads = offlineDownloads.state
-    private val playbackResolver = PlaybackResolver(offlineDownloads::completedSource, YouTubeMusicRepository::resolve)
-    private val searchController = SearchController(viewModelScope, YouTubeMusicRepository::search)
+    private val catalog = io.github.oks328.m3music.account.YouTubeAccountClient()
+    private val searchController = SearchController(viewModelScope, catalog::searchCollections, YouTubeMusicRepository::search)
     val search = searchController.state
+    suspend fun findTrackArtists(track: Track) = catalog.findTrackArtists(track)
+    suspend fun findSongCollection(track: Track, kind: io.github.oks328.m3music.account.AccountItemKind) =
+        catalog.findSongCollection(track, kind)
     private val mutablePlayback = MutableStateFlow(PlaybackState())
     val playback = mutablePlayback.asStateFlow()
     private var controller: MediaController? = null
-    private var resolveJob: Job? = null
     private val controllerFuture = MediaController.Builder(application,
         SessionToken(application, ComponentName(application, PlaybackService::class.java)))
         .setListener(object : MediaController.Listener {
@@ -74,48 +74,45 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun search(query: String) = searchController.search(query)
+    private val searchPreferences = application.getSharedPreferences("search_history", 0)
+    private val recentSearches = kotlinx.coroutines.flow.MutableStateFlow(
+        runCatching {
+            val saved = org.json.JSONArray(searchPreferences.getString("queries", "[]"))
+            List(saved.length()) { saved.getString(it) }
+        }.getOrDefault(emptyList())
+    )
+    val searchHistory: kotlinx.coroutines.flow.StateFlow<List<String>> = recentSearches
 
-    fun play(track: Track) {
-        val player = controller ?: return
-        resolveJob?.cancel()
-        player.stop()
-        player.clearMediaItems()
-        mutablePlayback.value = PlaybackState(connected = true, track = track, resolving = true)
-        resolveJob = viewModelScope.launch {
-            try {
-                val source = playbackResolver.resolve(track.id)
-                ensureActive()
-                val offline = source.url.startsWith("offline:")
-                player.setMediaItem(MediaItem.Builder()
-                    .setMediaId(track.id)
-                    .setUri(source.url)
-                    .setMimeType(source.mimeType)
-                    .setCustomCacheKey(track.id)
-                    .setMediaMetadata(MediaMetadata.Builder()
-                        .setTitle(track.title).setArtist(track.artist)
-                        .setArtworkUri(track.artworkUrl?.let(Uri::parse))
-                        .build())
-                    .build())
-                mutablePlayback.value = mutablePlayback.value.copy(resolving = false, offline = offline)
-                player.prepare()
-                player.play()
-                updatePlayback()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                ensureActive()
-                mutablePlayback.value = mutablePlayback.value.copy(
-                    resolving = false, buffering = false, playing = false,
-                    error = "Couldn't load this song. Check your connection or try another result.")
-            }
+    fun clearSearchHistory() {
+        recentSearches.value = emptyList()
+        searchPreferences.edit().remove("queries").apply()
+    }
+
+    fun search(query: String) {
+        val term = query.trim()
+        if (term.isNotEmpty()) {
+            val history = (listOf(term) + recentSearches.value.filterNot { it.equals(term, ignoreCase = true) }).take(20)
+            recentSearches.value = history
+            searchPreferences.edit().putString("queries", org.json.JSONArray(history).toString()).apply()
         }
+        searchController.search(term)
+    }
+
+    fun play(track: Track) = playPlaylist(listOf(track))
+
+    fun stopPlaying() {
+        controller?.let { player ->
+            player.stop()
+            player.clearMediaItems()
+        }
+        mutablePlayback.value = PlaybackState(connected = controller != null)
     }
 
     fun togglePlayback() {
         val player = controller ?: return
         if (player.isPlaying || player.playWhenReady) player.pause() else {
             if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
+            if (player.playbackState == Player.STATE_IDLE) player.prepare()
             player.play()
         }
         updatePlayback()
@@ -137,16 +134,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun playPlaylist(tracks: List<Track>, startIndex: Int = 0) {
         if (tracks.isEmpty() || startIndex !in tracks.indices) return
         val player = controller ?: return
-        resolveJob?.cancel()
         player.stop()
-        val saved = downloads.value.items.filter { it.status == DownloadStatus.COMPLETED }.map { it.track.id }.toSet()
-        val items = tracks.map { track ->
-            MediaItem.Builder().setMediaId(track.id)
-                .setUri(if (track.id in saved) "offline:///${track.id}" else "track:///${track.id}")
-                .setCustomCacheKey(track.id)
-                .setMediaMetadata(MediaMetadata.Builder().setTitle(track.title).setArtist(track.artist)
-                    .setArtworkUri(track.artworkUrl?.let(Uri::parse)).build()).build()
-        }
+        val saved = savedTrackIds()
+        val items = tracks.map { it.queueItem(it.id in saved) }
         mutablePlayback.value = PlaybackState(connected = true, track = tracks[startIndex], offline = tracks[startIndex].id in saved)
         player.setMediaItems(items, startIndex, 0)
         player.prepare()
@@ -154,8 +144,53 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         updatePlayback()
     }
 
+    fun enqueue(track: Track) {
+        val player = controller ?: return
+        if (!player.isCommandAvailable(Player.COMMAND_CHANGE_MEDIA_ITEMS)) return
+        if (player.mediaItemCount == 0) player.pause()
+        player.addMediaItem(track.queueItem(track.id in savedTrackIds()))
+        updatePlayback()
+    }
+
+    fun moveQueueItem(from: Int, to: Int) {
+        val player = controller ?: return
+        if (from == to || from !in 0 until player.mediaItemCount || to !in 0 until player.mediaItemCount ||
+            !player.isCommandAvailable(Player.COMMAND_CHANGE_MEDIA_ITEMS)) return
+        player.moveMediaItem(from, to)
+        updatePlayback()
+    }
+
+    private fun savedTrackIds() = downloads.value.items
+        .filter { it.status == DownloadStatus.COMPLETED }.map { it.track.id }.toSet()
+
+    private fun Track.queueItem(saved: Boolean): MediaItem =
+        MediaItem.Builder().setMediaId(id)
+            .setUri(if (saved) "offline:///$id" else "track:///$id")
+            .setCustomCacheKey(id)
+            .setMediaMetadata(MediaMetadata.Builder().setTitle(title).setArtist(artist)
+                .setArtworkUri(artworkUrl?.let(Uri::parse)).build())
+            .build()
+
     fun previous() { controller?.seekToPreviousMediaItem(); updatePlayback() }
     fun next() { controller?.seekToNextMediaItem(); updatePlayback() }
+    fun toggleShuffle() {
+        val player = controller ?: return
+        if (player.isCommandAvailable(Player.COMMAND_SET_SHUFFLE_MODE)) {
+            player.shuffleModeEnabled = !player.shuffleModeEnabled
+        }
+    }
+
+    fun cycleRepeat() {
+        val player = controller ?: return
+        if (player.isCommandAvailable(Player.COMMAND_SET_REPEAT_MODE)) {
+            player.repeatMode = when (player.repeatMode) {
+                Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
+                Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
+                else -> Player.REPEAT_MODE_OFF
+            }
+        }
+    }
+
     fun playQueueItem(index: Int) {
         val player = controller ?: return
         if (index !in 0 until player.mediaItemCount) return
@@ -171,11 +206,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun clearHistory() { localLibrary.clearHistory() }
     fun dismissLibraryError() = localLibrary.dismissError()
 
+    fun downloadAlbum(album: DownloadedAlbum, tracks: List<Track>) = offlineDownloads.downloadAlbum(album, tracks)
+    fun download(tracks: List<Track>) = offlineDownloads.download(tracks)
     fun download(track: Track) = offlineDownloads.download(track)
     fun setWifiOnly(enabled: Boolean) = offlineDownloads.setWifiOnly(enabled)
     fun removeDownload(id: String) {
         if (playback.value.offline && playback.value.track?.id == id) {
-            resolveJob?.cancel()
             controller?.stop()
             controller?.clearMediaItems()
             mutablePlayback.value = PlaybackState(connected = controller?.isConnected == true)
@@ -218,6 +254,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             canNext = player.hasNextMediaItem(),
             queueIndex = player.currentMediaItemIndex.coerceAtLeast(0),
             queueSize = player.mediaItemCount,
+            shuffle = player.shuffleModeEnabled,
+            repeat = when (player.repeatMode) {
+                Player.REPEAT_MODE_ONE -> RepeatMode.ONE
+                Player.REPEAT_MODE_ALL -> RepeatMode.ALL
+                else -> RepeatMode.OFF
+            },
             queue = cachedQueue,
             error = if (player.playerError != null && previous.offline)
                 "Couldn't read this download. Remove it and download the song again."
@@ -227,7 +269,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
-        resolveJob?.cancel()
         controller?.removeListener(listener)
         MediaController.releaseFuture(controllerFuture)
         super.onCleared()

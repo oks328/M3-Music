@@ -1,28 +1,78 @@
 package io.github.oks328.m3music.ui.theme
 
+import android.content.res.AssetManager
+import android.graphics.Typeface
+import android.graphics.fonts.FontVariationAxis
+import android.util.LruCache
 import androidx.compose.material3.Typography
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
-import io.github.oks328.m3music.R
+import androidx.compose.ui.unit.Density
 
-private fun TextStyle.googleSans(weight: FontWeight = FontWeight.Normal): TextStyle =
-    copy(fontFamily = FontFamily(Font(R.font.google_sans_flex, weight = weight,
-        variationSettings = FontVariation.Settings(FontVariation.weight(weight.weight)))), fontWeight = weight)
+internal class MusicTypeStyles private constructor(private val assets: AssetManager, private val density: Density) {
+    companion object {
+        private val cache = LruCache<Pair<AssetManager, Density>, MusicTypeStyles>(3)
 
-private val baseline = Typography()
-val Typography = Typography(
-    displaySmall = baseline.displaySmall.googleSans(FontWeight.ExtraBold),
-    headlineLarge = baseline.headlineLarge.googleSans(FontWeight.ExtraBold),
-    headlineMedium = baseline.headlineMedium.googleSans(FontWeight.Bold),
-    headlineSmall = baseline.headlineSmall.googleSans(FontWeight.Bold),
-    titleLarge = baseline.titleLarge.googleSans(FontWeight.Bold),
-    titleMedium = baseline.titleMedium.googleSans(FontWeight.SemiBold),
-    titleSmall = baseline.titleSmall.googleSans(FontWeight.SemiBold),
-    bodyLarge = baseline.bodyLarge.googleSans(),
-    bodyMedium = baseline.bodyMedium.googleSans(),
-    bodySmall = baseline.bodySmall.googleSans(),
-    labelLarge = baseline.labelLarge.googleSans(FontWeight.Bold),
-)
+        fun get(assets: AssetManager, density: Density): MusicTypeStyles =
+            cache[assets to density] ?: MusicTypeStyles(assets, density).also {
+                cache.put(assets to density, it)
+            }
+    }
+
+    private val baseline = Typography()
+
+    // Build each face with its axes before passing it to Compose.
+    private fun TextStyle.googleSans(
+        weight: Int = 430,
+        width: Float = 100f,
+        slant: Float = 0f,
+        roundness: Float = 24f,
+    ): TextStyle {
+        val opticalSize = with(density) { fontSize.toDp().value }.coerceIn(1f, 144f)
+        val typeface = Typeface.Builder(assets, "fonts/google_sans_flex.ttf")
+            .setWeight(weight)
+            .setFontVariationSettings(arrayOf(
+                FontVariationAxis("wght", weight.toFloat()),
+                FontVariationAxis("wdth", width),
+                FontVariationAxis("slnt", slant),
+                FontVariationAxis("ROND", roundness),
+                FontVariationAxis("opsz", opticalSize),
+            ))
+            .build()
+        return copy(fontFamily = typeface?.let { FontFamily(it) } ?: FontFamily.Default,
+            fontWeight = FontWeight(weight))
+    }
+
+    private fun TextStyle.heading1() = googleSans(weight = 500, width = 25f, roundness = 100f)
+    private fun TextStyle.heading2() = googleSans(weight = 400, width = 62.5f, roundness = 100f)
+    private fun TextStyle.heading3() = googleSans(weight = 400, width = 75f, roundness = 100f)
+
+    val typography = Typography(
+        displayLarge = baseline.displayLarge.heading1(),
+        displayMedium = baseline.displayMedium.heading1(),
+        displaySmall = baseline.displaySmall.heading1(),
+        headlineLarge = baseline.headlineLarge.heading1(),
+        headlineMedium = baseline.headlineMedium.heading1(),
+        headlineSmall = baseline.headlineSmall.heading2(),
+        titleLarge = baseline.titleLarge.heading3(),
+        titleMedium = baseline.titleMedium.googleSans(630, 99f, 0f, 43f),
+        titleSmall = baseline.titleSmall.googleSans(625, 99f, 0f, 43f),
+        bodyLarge = baseline.bodyLarge.googleSans(),
+        bodyMedium = baseline.bodyMedium.googleSans(),
+        bodySmall = baseline.bodySmall.googleSans(),
+        labelLarge = baseline.labelLarge.googleSans(650, 99f, 0f, 47f),
+        labelMedium = baseline.labelMedium.googleSans(570, 99f, 0f, 34f),
+        labelSmall = baseline.labelSmall.googleSans(570, 99f, 0f, 34f),
+    )
+
+    val brandTitle = baseline.titleLarge.heading1()
+    val selectedNavigationLabel = baseline.labelMedium.googleSans(735, 101f, -2f, 78f)
+    val compactTrackTitle = baseline.titleMedium.googleSans(690, 98f, 0f, 56f)
+    val condensedPlayerTitle = baseline.headlineSmall.heading3()
+}
+
+internal val LocalMusicTypeStyles = staticCompositionLocalOf<MusicTypeStyles> {
+    error("Music typography is available inside M3MusicTheme.")
+}

@@ -35,4 +35,99 @@ class AccountResponseParserTest {
         assertThrows(AccountResponseChanged::class.java) { AccountResponseParser.page(JSONObject("""{"unexpected":"layout"}""")) }
         assertThrows(AccountResponseChanged::class.java) { AccountResponseParser.profile(JSONObject("{}")) }
     }
+    @Test fun discoveryAlbumWithPlayOverlayOpensTheAlbum() {
+        val json = JSONObject("""
+            {"contents":{"musicCarouselShelfRenderer":{
+                "header":{"musicCarouselShelfBasicHeaderRenderer":{"title":{"simpleText":"Albums for you"}}},
+                "contents":[
+                    {"musicTwoRowItemRenderer":{
+                        "title":{"runs":[{"text":"An album"}]},
+                        "navigationEndpoint":{"browseEndpoint":{"browseId":"MPREalbum"}},
+                        "thumbnailOverlay":{"musicItemThumbnailOverlayRenderer":{"content":{
+                            "musicPlayButtonRenderer":{"playNavigationEndpoint":{"watchEndpoint":{"videoId":"abcdefghijk"}}}
+                        }}}
+                    }},
+                    {"musicTwoRowItemRenderer":{
+                        "title":{"simpleText":"A song"},
+                        "subtitle":{"simpleText":"Song \u2022 A singer"},
+                        "navigationEndpoint":{"watchEndpoint":{"videoId":"lmnopqrstuv"}}
+                    }}
+                ]
+            }}}
+        """.trimIndent())
+        val (album, song) = AccountResponseParser.discovery(json).single().items
+        assertEquals(AccountItemKind.ALBUM, album.kind)
+        assertEquals("MPREalbum", album.id)
+        assertNull(album.track)
+        assertEquals(AccountItemKind.SONG, song.kind)
+        assertEquals("lmnopqrstuv", song.track?.id)
+        assertEquals("A singer", song.track?.artist)
+    }
+    @Test fun albumHeaderFillsMissingCoverAndArtist() {
+        val page = AccountResponseParser.page(JSONObject("""
+            {"contents":{"sectionListRenderer":{"contents":[
+                {"musicResponsiveHeaderRenderer":{"straplineTextOne":{"simpleText":"Album Artist"},"thumbnail":{"musicThumbnailRenderer":{"thumbnail":{
+                    "thumbnails":[{"url":"https://example.org/cover.jpg","width":500}]
+                }}}}},
+                {"musicShelfRenderer":{"contents":[{"musicResponsiveListItemRenderer":{
+                    "title":{"simpleText":"A song"},
+                    "playlistItemData":{"videoId":"abcdefghijk"}
+                }}]}}
+            ]}}}
+        """.trimIndent()))
+        val album = AccountItem("MPREalbum", "An album", kind = AccountItemKind.ALBUM)
+        assertEquals("https://example.org/cover.jpg", page.artworkUrl)
+        assertNull(page.items.single().track?.artworkUrl)
+        val track = requireNotNull(page.withAlbumMetadata(album).items.single().track)
+        assertEquals(page.artworkUrl, track.artworkUrl)
+        assertEquals("Album Artist", track.artist)
+        assertEquals("Guest Artist", page.fillAlbumCredits(track.copy(artist = "Guest Artist")).artist)
+    }
+    @Test fun editablePlaylistKeepsSuggestionContinuationSeparateFromSongs() {
+        val page = AccountResponseParser.page(JSONObject("""
+            {"contents":{
+                "header":{"musicEditablePlaylistDetailHeaderRenderer":{}},
+                "sectionListRenderer":{
+                    "contents":[{"musicPlaylistShelfRenderer":{"contents":[],
+                        "continuations":[{"nextContinuationData":{"continuation":"more-songs"}}]
+                    }}],
+                    "continuations":[{"nextContinuationData":{"continuation":"suggested-songs"}}]
+                }
+            }}
+        """.trimIndent()), playlist = true)
+        assertTrue(page.editable)
+        assertTrue(page.items.isEmpty())
+        assertEquals("more-songs", page.continuation)
+        assertEquals("suggested-songs", page.suggestionsToken)
+    }
+    @Test fun songAlbumLookupRequiresTheExactVideoId() {
+        val json = JSONObject("""
+            {"contents":{"musicShelfRenderer":{"contents":[
+                {"musicResponsiveListItemRenderer":{"title":{"simpleText":"A song"},
+                 "playlistItemData":{"videoId":"abcdefghijk"},"flexColumns":[
+                   {"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[
+                     {"text":"The album","navigationEndpoint":{"browseEndpoint":{"browseId":"MPREtest"}}}
+                   ]}}}
+                 ]}}
+            ]}}}
+        """.trimIndent())
+        assertEquals("MPREtest", AccountResponseParser.songCollection(json, "abcdefghijk", AccountItemKind.ALBUM)?.id)
+        assertNull(AccountResponseParser.songCollection(json, "lmnopqrstuv", AccountItemKind.ALBUM))
+    }
+    @Test fun collaborationTracksExposeEachLinkedArtist() {
+        val json = JSONObject("""
+            {"contents":{"musicShelfRenderer":{"contents":[
+                {"musicResponsiveListItemRenderer":{"title":{"simpleText":"A duet"},
+                 "playlistItemData":{"videoId":"abcdefghijk"},"flexColumns":[
+                   {"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[
+                     {"text":"First Artist","navigationEndpoint":{"browseEndpoint":{"browseId":"UCfirst"}}},
+                     {"text":" & "},
+                     {"text":"Second Artist","navigationEndpoint":{"browseEndpoint":{"browseId":"UCsecond"}}}
+                   ]}}}
+                 ]}}
+            ]}}}
+        """.trimIndent())
+        val credits = AccountResponseParser.songCollections(json, "abcdefghijk", AccountItemKind.ARTIST)
+        assertEquals(listOf("First Artist", "Second Artist"), credits.map { it.title })
+    }
 }

@@ -1,6 +1,8 @@
 package io.github.oks328.m3music.music
 
+import io.github.oks328.m3music.account.AccountItem
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
@@ -22,15 +24,26 @@ data class SearchState(
     val loading: Boolean = false,
     val hasSearched: Boolean = false,
     val error: String? = null,
+    val collections: List<AccountItem> = emptyList(),
+    val partialError: String? = null,
 )
 
 class SearchController(
     private val scope: CoroutineScope,
+    private val searchCollections: suspend (String) -> List<AccountItem> = { emptyList() },
     private val searchCatalog: suspend (String) -> List<Track>,
 ) {
     private val mutableState = MutableStateFlow(SearchState())
     val state = mutableState.asStateFlow()
     private var searchJob: Job? = null
+
+    private suspend fun <T> searchPart(load: suspend () -> T): Result<T> = try {
+        Result.success(load())
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: Exception) {
+        Result.failure(failure)
+    }
 
     fun search(query: String) {
         searchJob?.cancel()
@@ -42,9 +55,19 @@ class SearchController(
         mutableState.value = SearchState(query = normalized, loading = true)
         searchJob = scope.launch {
             try {
-                val tracks = searchCatalog(normalized)
+                val songRequest = async { searchPart { searchCatalog(normalized) } }
+                val collectionRequest = async { searchPart { searchCollections(normalized) } }
+                val songs = songRequest.await()
+                val collections = collectionRequest.await()
                 ensureActive()
-                mutableState.value = SearchState(normalized, tracks, hasSearched = true)
+                if (songs.isFailure && collections.getOrNull().isNullOrEmpty()) throw requireNotNull(songs.exceptionOrNull())
+                val partialError = when {
+                    songs.isFailure -> "Couldn't load songs."
+                    collections.isFailure -> "Couldn't load albums and artists."
+                    else -> null
+                }
+                mutableState.value = SearchState(normalized, songs.getOrDefault(emptyList()), hasSearched = true,
+                    collections = collections.getOrDefault(emptyList()), partialError = partialError)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {

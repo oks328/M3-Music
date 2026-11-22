@@ -34,10 +34,37 @@ data class AccountItem(
     val track: Track? = null,
     val editable: Boolean = false,
     val setVideoId: String? = null,
+    val albumArtist: String? = null,
 ) {
     val key: String get() = "$id:${setVideoId.orEmpty()}"
 }
-data class AccountPage(val items: List<AccountItem> = emptyList(), val continuation: String? = null, val editable: Boolean = false)
+data class DiscoveryShelf(val title: String, val items: List<AccountItem>)
+
+data class AccountPage(
+    val items: List<AccountItem> = emptyList(),
+    val continuation: String? = null,
+    val editable: Boolean = false,
+    val artworkUrl: String? = null,
+    val albumArtist: String? = null,
+    val shelves: List<DiscoveryShelf> = emptyList(),
+    val suggestionsToken: String? = null,
+) {
+    internal fun withAlbumMetadata(collection: AccountItem): AccountPage {
+        if (collection.kind != AccountItemKind.ALBUM) return this
+        val album = copy(artworkUrl = artworkUrl ?: collection.artworkUrl,
+            albumArtist = albumArtist ?: collection.albumArtist)
+        return album.copy(items = items.map { item ->
+            val track = item.track
+            if (track == null) item
+            else album.fillAlbumCredits(track).let { song -> item.copy(artworkUrl = song.artworkUrl, track = song) }
+        })
+    }
+
+    internal fun fillAlbumCredits(track: Track): Track = track.copy(
+        artworkUrl = track.artworkUrl ?: artworkUrl,
+        artist = track.artist.ifBlank { albumArtist.orEmpty() },
+    )
+}
 data class AccountState(
     val initializing: Boolean = true,
     val profile: AccountProfile? = null,
@@ -63,8 +90,11 @@ interface AccountSessionStore {
 }
 
 interface AccountGateway {
+    suspend fun discovery(session: AccountSession?): List<DiscoveryShelf> = emptyList()
+    suspend fun discoveryCollection(session: AccountSession?, id: String, continuation: String? = null): AccountPage = AccountPage()
     suspend fun profile(session: AccountSession): AccountProfile
     suspend fun browse(session: AccountSession, browseId: String, continuation: String? = null): AccountPage
+    suspend fun playlistSuggestions(session: AccountSession, id: String, token: String): List<Track> = emptyList()
     suspend fun perform(session: AccountSession, action: AccountAction) { throw UnsupportedOperationException() }
 }
 

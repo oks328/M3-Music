@@ -16,10 +16,14 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.res.painterResource
+import io.github.oks328.m3music.R
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import io.github.oks328.m3music.account.*
 import io.github.oks328.m3music.music.Track
+import kotlinx.coroutines.CancellationException
 
 data class AccountActions(
     val signIn: () -> Unit = {},
@@ -30,6 +34,10 @@ data class AccountActions(
     val refresh: () -> Unit = {},
     val more: () -> Unit = {},
     val perform: (AccountAction) -> Unit = {},
+    val suggestions: suspend (String, String?) -> List<Track> = { _, _ -> emptyList() },
+    val searchSongs: suspend (String) -> List<Track> = { emptyList() },
+    val editablePlaylists: suspend (String?) -> AccountPage = { AccountPage() },
+    val savePlaylistTrack: suspend (AccountItem, Track) -> Boolean = { _, _ -> false },
 )
 
 @Composable
@@ -40,6 +48,7 @@ internal fun AccountPanel(
     onPlay: (Track) -> Unit,
     onPlaySongs: (List<Track>, Int) -> Unit,
     onDownload: (Track) -> Unit,
+    collectionDownload: @Composable (AccountItem, AccountPage) -> Unit,
     candidates: List<Track>,
     recent: List<Track> = emptyList(),
     showSettings: Boolean = false,
@@ -51,12 +60,31 @@ internal fun AccountPanel(
     var deleting by remember { mutableStateOf<AccountItem?>(null) }
     var removing by remember { mutableStateOf<AccountItem?>(null) }
     var naming by remember { mutableStateOf(false) }
-    var adding by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf("") }
     var playLikedWhenLoaded by remember { mutableStateOf(false) }
     val collection = state.collection
     val page = if (collection == null) state.page else state.detail
     val editable = collection?.kind == AccountItemKind.PLAYLIST && (collection.editable || page.editable)
+    var adding by rememberSaveable(collection?.id) { mutableStateOf(false) }
+    val currentIds = remember(page.items) { page.items.mapNotNull { it.track?.id }.toSet() }
+    val addSong: (Track) -> Unit = { track ->
+        if (collection != null && editable && !state.mutating && track.id !in currentIds) {
+            actions.perform(AccountAction.AddSong(collection.id, track.id))
+        }
+    }
+    var suggestions by remember(collection?.id, state.expired) { mutableStateOf<List<Track>?>(null) }
+    val token = page.suggestionsToken
+    LaunchedEffect(collection?.id, token, editable, state.loading, state.expired) {
+        if (collection != null && editable && !state.loading && !state.expired) {
+            suggestions = try {
+                actions.suggestions(collection.id, token)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+    }
     val listState = rememberLazyListState()
     LaunchedEffect(playLikedWhenLoaded, state.category, state.page, state.loading, state.error) {
         if (playLikedWhenLoaded && state.category == AccountCategory.LIKED_SONGS && !state.loading) {
@@ -65,10 +93,22 @@ internal fun AccountPanel(
             playLikedWhenLoaded = false
         }
     }
-    LaunchedEffect(collection?.id, state.category) { listState.scrollToItem(0) }
+    val pageKey = collection?.id ?: state.category.name
+    var lastPageKey by rememberSaveable { mutableStateOf(pageKey) }
+    LaunchedEffect(pageKey) {
+        if (lastPageKey != pageKey) {
+            lastPageKey = pageKey
+            listState.scrollToItem(0)
+        }
+    }
     BackHandler(collection != null) { actions.back() }
     LaunchedEffect(state.profile, state.expired) {
         if (state.profile != null && !state.expired) actions.refresh()
+    }
+    if (adding && collection != null && editable && !state.expired) {
+        PlaylistSongPicker(collection.title, actions.searchSongs, currentIds, state.mutating || state.loading,
+            state.error, onAdd = addSong, onBack = { adding = false }, bottomClearance = bottomClearance, modifier = modifier)
+        return
     }
     LazyColumn(modifier.fillMaxWidth(), state = listState, verticalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = PaddingValues(bottom = 16.dp + bottomClearance)) {
@@ -105,20 +145,31 @@ internal fun AccountPanel(
                         }
                     }
                     if (collection != null) item {
-                        CollectionHeader(collection, page.items.mapNotNull { it.track }, page.continuation != null,
+                        CollectionHeader(collection.copy(artworkUrl = page.artworkUrl ?: collection.artworkUrl), page.items.mapNotNull { it.track }, page.continuation != null,
                             playbackConnected, editable, state.loading || state.mutating, actions.back, onPlaySongs,
                             actions.refresh, onAdd = { adding = true }, onRename = { name = collection.title; naming = true },
-                            onDelete = { deleting = collection })
+                            onDelete = { deleting = collection },
+                            downloadAction = if (collection.kind in listOf(AccountItemKind.ALBUM, AccountItemKind.PLAYLIST)) {
+                                { collectionDownload(collection, page) }
+                            } else null)
                     }
                     else item {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Text(if (state.category == AccountCategory.PLAYLISTS) "Your playlists" else state.category.label,
                                 style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
                             if (state.category == AccountCategory.PLAYLISTS) TextButton(onClick = { name = ""; naming = true }, enabled = !state.mutating) { Text("New playlist") }
+                            IconButton(onClick = actions.refresh, enabled = !state.loading && !state.mutating) {
+                                Icon(painterResource(R.drawable.ic_refresh), "Refresh account library")
+                            }
                         }
                     }
-                    if (collection == null) item {
-                        TextButton(onClick = actions.refresh, enabled = !state.loading && !state.mutating) { Text("Refresh account library") }
+                    if (editable) item {
+                        FilledTonalButton(onClick = { adding = true }, enabled = !state.mutating,
+                            modifier = Modifier.fillMaxWidth()) {
+                            Icon(painterResource(R.drawable.ic_add_playlist), null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Add a song")
+                        }
                     }
                     state.message?.let { message -> item { Text(message, style = MaterialTheme.typography.bodySmall) } }
                     state.error?.let { message -> item {
@@ -127,6 +178,7 @@ internal fun AccountPanel(
                     } }
                     if (!state.loading && state.error == null && page.items.isEmpty()) item {
                         Text(if (collection == null) "Nothing here yet. Try another category or refresh."
+                            else if (editable) "No songs in this playlist yet."
                             else "No songs are available in this collection.")
                     }
                     if (collection == null && state.category == AccountCategory.PLAYLISTS && page.items.isNotEmpty()) {
@@ -161,6 +213,23 @@ internal fun AccountPanel(
                     if (page.continuation != null) item {
                         Button(onClick = actions.more, enabled = !state.loading && !state.mutating) { Text("Load more") }
                     }
+                    if (editable) {
+                        val suggested = (suggestions?.takeIf { it.isNotEmpty() } ?: candidates)
+                            .asSequence().filter { it.id !in currentIds }.distinctBy { it.id }.take(8).toList()
+                        if (suggested.isNotEmpty()) {
+                            item {
+                                Text("Suggestions", style = MaterialTheme.typography.headlineSmall)
+                                if (suggestions.isNullOrEmpty()) {
+                                    Text("From your listening and searches", style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                            items(suggested, key = { "suggestion:${it.id}" }) { track ->
+                                PlaylistAddSongRow(track, added = false, enabled = !state.mutating && !state.loading,
+                                    onAdd = { addSong(track) })
+                            }
+                        }
+                    }
                     if (collection == null && state.category == AccountCategory.PLAYLISTS && recent.isNotEmpty()) item {
                         RecentShelf(recent, playbackConnected, onPlay)
                     }
@@ -187,13 +256,4 @@ internal fun AccountPanel(
             collection?.let { actions.perform(AccountAction.RemoveSong(it.id, target.id, requireNotNull(target.setVideoId))) }
             removing = null
         }) { Text("Remove on YouTube") } }, dismissButton = { TextButton(onClick = { removing = null }) { Text("Cancel") } }) }
-    if (adding && collection != null) AlertDialog(onDismissRequest = { adding = false }, title = { Text("Add a song to ${collection.title}") },
-        text = {
-            LazyColumn(Modifier.heightIn(max = 320.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (candidates.isEmpty()) item { Text("Search for a song or download one first, then return here to add it.") }
-                items(candidates, key = { it.id }) { song ->
-                    TextButton(onClick = { actions.perform(AccountAction.AddSong(collection.id, song.id)); adding = false }) { Text("${song.title} · ${song.artist}") }
-                }
-            }
-        }, confirmButton = { TextButton(onClick = { adding = false }) { Text("Done") } })
 }

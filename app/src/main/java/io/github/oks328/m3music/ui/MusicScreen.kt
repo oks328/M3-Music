@@ -16,13 +16,16 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
+import io.github.oks328.m3music.ui.theme.LocalMusicTypeStyles
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
@@ -34,6 +37,7 @@ import coil.request.CachePolicy
 import androidx.compose.ui.platform.LocalContext
 import io.github.oks328.m3music.downloads.DownloadsState
 import io.github.oks328.m3music.downloads.DownloadEntry
+import io.github.oks328.m3music.downloads.DownloadedAlbum
 import io.github.oks328.m3music.downloads.DownloadStatus
 import io.github.oks328.m3music.R
 import io.github.oks328.m3music.music.SearchState
@@ -41,7 +45,9 @@ import io.github.oks328.m3music.music.Track
 import io.github.oks328.m3music.playback.PlaybackState
 import io.github.oks328.m3music.library.LibraryState
 import io.github.oks328.m3music.library.LocalPlaylist
-import io.github.oks328.m3music.account.AccountState
+import io.github.oks328.m3music.account.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
@@ -73,151 +79,291 @@ fun MusicScreen(
     account: AccountState = AccountState(initializing = false),
     accountActions: AccountActions = AccountActions(),
     onQueueItem: (Int) -> Unit = {},
+    onMoveQueueItem: (Int, Int) -> Unit = { _, _ -> },
+    onEnqueue: (Track) -> Unit = {},
+    onShuffle: () -> Unit = {},
+    onRepeat: () -> Unit = {},
+    searchHistory: List<String> = emptyList(),
+    onClearSearchHistory: () -> Unit = {},
+    loadDiscovery: suspend () -> List<DiscoveryShelf> = { emptyList() },
+    loadDiscoveryCollection: suspend (String) -> AccountPage = { AccountPage() },
+    findArtist: (suspend (String) -> AccountItem?)? = null,
+    findTrackArtists: (suspend (Track) -> List<AccountItem>)? = null,
+    findSongCollection: (suspend (Track, AccountItemKind) -> AccountItem?)? = null,
+    onDownloadTracks: (List<Track>) -> Unit = { tracks -> tracks.forEach(onDownload) },
+    onDownloadAlbum: (DownloadedAlbum, List<Track>) -> Unit = { _, tracks -> onDownloadTracks(tracks) },
+    loadCollectionTracks: suspend (String, AccountPage, Boolean) -> List<Track> = { _, page, _ ->
+        page.items.mapNotNull { it.track }
+    },
 ) {
     var query by rememberSaveable { mutableStateOf(search.query) }
     var destination by rememberSaveable { mutableStateOf("Home") }
-    val showDownloads = destination == "Downloads"
+    var librarySection by rememberSaveable { mutableStateOf("YouTube Music") }
+    val showDownloads = destination == "Library" && librarySection == "Downloads"
+    val showAccountLibrary = destination == "Library" && librarySection == "YouTube Music"
     val showLibrary = destination == "Library"
     val showHome = destination == "Home"
+    var searchFilter by rememberSaveable { mutableStateOf("All") }
+    var searchCollectionId by rememberSaveable { mutableStateOf<String?>(null) }
+    val searchCollection = search.collections.firstOrNull { it.id == searchCollectionId }
+    val searchResultsScroll = androidx.compose.foundation.lazy.rememberLazyListState()
     var showAccount by rememberSaveable { mutableStateOf(false) }
+    val tabState = rememberSaveableStateHolder()
     var expandedPlayer by rememberSaveable { mutableStateOf(false) }
-    BackHandler(!showHome && !showAccount && !expandedPlayer) { destination = "Home" }
+    var playerDragOffset by remember { mutableFloatStateOf(0f) }
+    BackHandler(!showHome && !showAccount && !expandedPlayer) {
+        if (destination == "Library" && librarySection != "YouTube Music") librarySection = "YouTube Music"
+        else destination = "Home"
+    }
     var addTrack by remember { mutableStateOf<Track?>(null) }
+    var youtubeAddTrack by remember { mutableStateOf<Track?>(null) }
     var creating by remember { mutableStateOf(false) }
     var createWithTrack by remember { mutableStateOf<Track?>(null) }
     var renaming by remember { mutableStateOf<LocalPlaylist?>(null) }
     var deleting by remember { mutableStateOf<LocalPlaylist?>(null) }
     val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    var openedCatalog by remember { mutableStateOf<AccountItem?>(null) }
+    var returnToPlayer by remember { mutableStateOf(false) }
+    var lookingUpSongCollection by remember { mutableStateOf(false) }
+    val openSongCollection: (Track, AccountItemKind) -> Unit = { track, kind ->
+        if (!lookingUpSongCollection) {
+            lookingUpSongCollection = true
+            scope.launch {
+                val label = if (kind == AccountItemKind.ARTIST) "artist" else "album"
+                val error = try {
+                    val collection = findSongCollection?.invoke(track, kind)
+                    if (collection != null && destination == "Search") {
+                        returnToPlayer = false
+                        openedCatalog = collection
+                        null
+                    } else if (collection == null && destination == "Search") {
+                        "Couldn't find the $label for ${track.title}."
+                    } else null
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    "Couldn't open the $label. Try again."
+                } finally {
+                    lookingUpSongCollection = false
+                }
+                if (error != null) snackbar.showSnackbar(error)
+            }
+        }
+    }
+    var lookingUpArtist by remember { mutableStateOf(false) }
+    val playerSnackbar = remember { SnackbarHostState() }
+    var artistChoices by remember(playback.track?.id) { mutableStateOf(emptyList<AccountItem>()) }
+    val showPlayerArtist: (AccountItem) -> Unit = { artist ->
+        artistChoices = emptyList()
+        returnToPlayer = true
+        openedCatalog = artist
+        expandedPlayer = false
+    }
+    var preparingCollection by remember { mutableStateOf<String?>(null) }
+    val downloadCollection: (AccountItem, AccountPage, Boolean) -> Unit = { item, page, fromLibrary ->
+        if (preparingCollection == null) {
+            preparingCollection = item.id
+            scope.launch {
+                val message = try {
+                    val tracks = loadCollectionTracks(item.id, page, fromLibrary)
+                    if (tracks.isEmpty()) "No downloadable songs in this collection."
+                    else {
+                        if (item.kind == AccountItemKind.ALBUM) {
+                            onDownloadAlbum(DownloadedAlbum(item.id, item.title, page.albumArtist ?: item.albumArtist,
+                                page.artworkUrl ?: item.artworkUrl ?: tracks.first().artworkUrl,
+                                tracks.map { it.id }.distinct()), tracks)
+                        } else onDownloadTracks(tracks)
+                        "Download requested. Check Library > Downloads for progress."
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    "Couldn't load all songs. Try downloading the collection again."
+                } finally {
+                    preparingCollection = null
+                }
+                snackbar.showSnackbar(message)
+            }
+        }
+    }
+    val collectionDownloadButton: @Composable (AccountItem, AccountPage, Boolean) -> Unit = { item, page, fromLibrary ->
+        val kind = if (item.kind == AccountItemKind.ALBUM) "album" else "playlist"
+        CollectionDownloadButton(kind, page.items.mapNotNull { it.track }, page.continuation != null, downloads,
+            preparingCollection != null, albumId = item.id.takeIf { item.kind == AccountItemKind.ALBUM }) {
+            downloadCollection(item, page, fromLibrary)
+        }
+    }
     LaunchedEffect(library.error) {
         library.error?.let { snackbar.showSnackbar(it); onDismissLibraryError() }
     }
     val keyboard = LocalSoftwareKeyboardController.current
     val submit = {
         keyboard?.hide()
+        searchFilter = "All"
+        scope.launch { searchResultsScroll.scrollToItem(0) }
         onSearch(query)
     }
     Box(Modifier.fillMaxSize()) {
     Scaffold(modifier = Modifier.fillMaxSize().imePadding(), snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
-            if (!expandedPlayer || playback.track == null) {
-                Column(
-                    Modifier.fillMaxWidth().navigationBarsPadding(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    if (playback.track != null) CompactPlayer(playback, onTogglePlayback, { expandedPlayer = true })
-                    Box(
-                        Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 8.dp)
-                            .widthIn(max = 480.dp).fillMaxWidth()
-                            .shadow(4.dp, RoundedCornerShape(28.dp), clip = true)
-                    ) {
-                        ShortNavigationBar(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            contentColor = MaterialTheme.colorScheme.onSurface,
-                        ) {
-                            listOf("Home" to R.drawable.ic_home, "Search" to R.drawable.ic_search,
-                                "Library" to R.drawable.ic_library, "Downloads" to R.drawable.ic_download)
-                                .forEach { (label, icon) ->
-                                    ShortNavigationBarItem(
-                                        selected = destination == label,
-                                        onClick = { destination = label },
-                                        icon = { Icon(painterResource(icon), null, Modifier.size(26.dp)) },
-                                        label = {
-                                            Text(label, style = MaterialTheme.typography.labelSmall,
-                                                maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        },
-                                    )
-                                }
+            if (!expandedPlayer || playback.track == null || playerDragOffset > 0f) {
+                Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp),
+                    contentAlignment = Alignment.Center) {
+                    Column(Modifier.widthIn(max = 448.dp).fillMaxWidth().padding(bottom = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (playback.track != null) {
+                            CompactPlayer(playback, onTogglePlayback, onNext = onNext, onExpand = {
+                                playerDragOffset = 0f
+                                expandedPlayer = true
+                            })
+                        }
+                        MusicBottomNavigation(destination) { label ->
+                            openedCatalog = null
+                            destination = label
                         }
                     }
                 }
             }
         }) { insets ->
-        Column(Modifier.fillMaxSize().padding(
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Column(Modifier.fillMaxHeight().padding(
             start = insets.calculateStartPadding(androidx.compose.ui.platform.LocalLayoutDirection.current),
             top = insets.calculateTopPadding(),
             end = insets.calculateEndPadding(androidx.compose.ui.platform.LocalLayoutDirection.current),
-        ).widthIn(max = 720.dp)
+        ).widthIn(max = 720.dp).fillMaxWidth()
             .padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(if (showHome && account.collection != null) when (account.collection.kind) {
+                Text(if (showAccountLibrary && account.collection != null) when (account.collection.kind) {
                     io.github.oks328.m3music.account.AccountItemKind.ALBUM -> "Album"
                     io.github.oks328.m3music.account.AccountItemKind.ARTIST -> "Artist"
                     else -> "Playlist"
-                } else if (showHome) "M3 Music" else destination,
-                    style = MaterialTheme.typography.titleLarge)
+                } else if (showHome) stringResource(R.string.app_name) else destination,
+                    style = if (showHome) LocalMusicTypeStyles.current.brandTitle else MaterialTheme.typography.titleLarge)
             }
                 FilledTonalIconButton(onClick = { showAccount = true }, modifier = Modifier.size(48.dp)) {
                     Icon(painterResource(R.drawable.ic_account), "Account")
                 }
             }
-            if (showHome || showLibrary) Unit else if (showDownloads) {
+            if (openedCatalog == null && showLibrary && (!showAccountLibrary || account.collection == null)) {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("YouTube Music", "Downloads", "On device").forEach { section ->
+                        FilterChip(selected = librarySection == section, onClick = { librarySection = section },
+                            label = { Text(section) })
+                    }
+                }
+            }
+            if (showDownloads && openedCatalog == null) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Download on Wi-Fi only", modifier = Modifier.weight(1f))
                     Switch(checked = downloads.wifiOnly, onCheckedChange = onWifiOnlyChanged,
                         modifier = Modifier.semantics { contentDescription = "Download on Wi-Fi only" })
                 }
-            } else OutlinedTextField(
+            } else if (!showHome && !showLibrary && searchCollection == null && openedCatalog == null) OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Songs or artists") },
+                label = { Text("Songs, albums, or artists") },
                 singleLine = true,
                 shape = RoundedCornerShape(24.dp),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { submit() }),
                 trailingIcon = {
-                    IconButton(onClick = { submit() }, enabled = query.isNotBlank()) { Icon(painterResource(R.drawable.ic_search), "Submit search") }
+                    Row {
+                        if (query.isNotEmpty()) IconButton(onClick = { query = ""; onSearch("") }) {
+                            Icon(painterResource(R.drawable.ic_clear), "Clear search text")
+                        }
+                        IconButton(onClick = { submit() }, enabled = query.isNotBlank()) {
+                            Icon(painterResource(R.drawable.ic_search), "Submit search")
+                        }
+                    }
                 },
             )
-            if (showHome) {
+            if (openedCatalog == null && destination == "Search" && searchCollection == null && query.isNotBlank() &&
+                search.hasSearched && search.error == null
+            ) {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("All", "Songs", "Albums", "Artists").forEach { filter ->
+                        FilterChip(selected = searchFilter == filter, onClick = {
+                            searchFilter = filter
+                            scope.launch { searchResultsScroll.scrollToItem(0) }
+                        }, label = { Text(filter) })
+                    }
+                }
+            }
+            tabState.SaveableStateProvider(if (showLibrary) librarySection else destination) {
+            val artist = openedCatalog
+            if (artist != null) {
+                CatalogCollectionPanel(artist, loadDiscoveryCollection, playback, onPlayPlaylist,
+                    insets.calculateBottomPadding(),
+                    collectionDownload = { item, page -> collectionDownloadButton(item, page, false) },
+                    onBack = {
+                        openedCatalog = null
+                        playerDragOffset = 0f
+                        expandedPlayer = returnToPlayer && playback.track != null
+                        returnToPlayer = false
+                    }, modifier = Modifier.weight(1f).fillMaxWidth())
+            } else if (showHome) {
+                DiscoveryPanel(account, loadDiscovery, loadDiscoveryCollection, playback, onPlayPlaylist,
+                    insets.calculateBottomPadding(),
+                    collectionDownload = { item, page -> collectionDownloadButton(item, page, false) },
+                    modifier = Modifier.weight(1f).fillMaxWidth())
+            } else if (showAccountLibrary) {
                 AccountPanel(account, accountActions, playbackConnected = playback.connected,
                     onPlay = onPlay, onPlaySongs = onPlayPlaylist, onDownload = onDownload,
+                    collectionDownload = { item, page -> collectionDownloadButton(item, page, true) },
                     candidates = (search.tracks + library.favorites + downloads.items.map { it.track } + library.history).distinctBy { it.id },
-                    recent = library.history, showSettings = showAccount, onDismissSettings = { showAccount = false },
+                    recent = library.history,
                     playingTrackId = playback.track?.id,
                     bottomClearance = insets.calculateBottomPadding(),
                     modifier = Modifier.weight(1f).fillMaxWidth())
-            } else if (showLibrary) {
+            } else if (showLibrary && !showDownloads) {
                 LibraryPanel(library, playback, downloads, onPlay, onPlayPlaylist, onFavorite,
                     onAdd = { addTrack = it }, onCreate = { createWithTrack = null; creating = true },
                     onRename = { renaming = it }, onDelete = { deleting = it },
                     onRemoveSong = onRemovePlaylistSong, onMoveSong = onMovePlaylistSong,
-                    onClearHistory = onClearHistory, bottomClearance = insets.calculateBottomPadding(), modifier = Modifier.weight(1f).fillMaxWidth())
+                    onClearHistory = onClearHistory, onDownloadTracks = onDownloadTracks, bottomClearance = insets.calculateBottomPadding(), modifier = Modifier.weight(1f).fillMaxWidth())
+            } else if (!showLibrary && searchCollection != null) {
+                CatalogCollectionPanel(searchCollection, loadDiscoveryCollection, playback, onPlayPlaylist,
+                    insets.calculateBottomPadding(),
+                    collectionDownload = { item, page -> collectionDownloadButton(item, page, false) },
+                    onBack = { searchCollectionId = null }, modifier = Modifier.weight(1f).fillMaxWidth())
+            } else if (showDownloads) {
+                DownloadsPanel(downloads, playback, onPlayPlaylist, onDownload, onRemoveDownload,
+                    insets.calculateBottomPadding(),
+                    Modifier.weight(1f).fillMaxWidth())
             } else LazyColumn(Modifier.weight(1f).fillMaxWidth(),
+                state = searchResultsScroll,
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(bottom = 16.dp + insets.calculateBottomPadding())) {
                 when {
-                    showDownloads -> {
-                        downloads.error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
-                        when {
-                            downloads.loading -> item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-                            downloads.items.isEmpty() -> item {
-                                Column(Modifier.padding(top = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Text("Take your music with you", style = MaterialTheme.typography.headlineSmall)
-                                    Text("Download a song from search to listen without a connection.",
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    query.isBlank() || !search.hasSearched && !search.loading -> {
+                        if (searchHistory.isNotEmpty()) {
+                            item {
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("Recent searches", style = MaterialTheme.typography.titleMedium)
+                                    TextButton(onClick = onClearSearchHistory) { Text("Clear history") }
                                 }
                             }
-                            else -> {
-                                item {
-                                    Text("${downloads.items.count { it.status == DownloadStatus.COMPLETED }} songs ready offline",
-                                        style = MaterialTheme.typography.titleMedium)
-                                }
-                                items(downloads.items, key = { it.track.id }) { entry ->
-                                    Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
-                                    Column(Modifier.padding(8.dp)) {
-                                        SongRow(entry.track, playback.track?.id == entry.track.id,
-                                            enabled = playback.connected && entry.status == DownloadStatus.COMPLETED,
-                                            offline = entry.status == DownloadStatus.COMPLETED,
-                                            onClick = { onPlay(entry.track) })
-                                        DownloadActions(entry, downloads, { onDownload(entry.track) }, { onRemoveDownload(entry.track.id) })
-                                        LibrarySongActions(entry.track, library.favorites.any { it.id == entry.track.id }, onFavorite, { addTrack = it })
-                                    }
+                            items(searchHistory, key = { it }) { term ->
+                                Surface(onClick = {
+                                    query = term
+                                    submit()
+                                }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+                                    color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        Icon(painterResource(R.drawable.ic_search), null)
+                                        Text(term)
                                     }
                                 }
                             }
+                        } else item {
+                            Text("Search for songs, albums, and artists on YouTube Music.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                     search.loading -> item {
@@ -230,43 +376,52 @@ fun MusicScreen(
                         Text(search.error, color = MaterialTheme.colorScheme.error)
                         TextButton(onClick = { onSearch(search.query) }) { Text("Try again") }
                     }
-                    !search.hasSearched -> item {
-                        Column(Modifier.padding(top = 40.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Icon(painterResource(R.drawable.ic_music_note), null,
-                                Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
-                            Text("Your music starts here", style = MaterialTheme.typography.headlineSmall)
-                            Text("Search for a song or artist on YouTube Music.",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                    search.tracks.isEmpty() -> item {
-                        Text("No songs found. Try a different song or artist.")
-                    }
                     else -> {
-                        item { Text("Songs", style = MaterialTheme.typography.titleMedium) }
-                        items(search.tracks, key = { it.id }) { track ->
-                            val entry = downloads.items.firstOrNull { it.track.id == track.id }
-                            Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
-                            Column(Modifier.padding(8.dp)) {
-                                SongRow(track, playback.track?.id == track.id,
-                                    enabled = playback.connected, onClick = { onPlay(track) })
-                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                LibrarySongActions(track, library.favorites.any { it.id == track.id }, onFavorite, { addTrack = it })
-                                Spacer(Modifier.weight(1f))
-                                if (entry == null) FilledTonalIconButton(onClick = { onDownload(track) },
-                                    modifier = Modifier.semantics { contentDescription = "Download ${track.title}" }) { Icon(painterResource(R.drawable.ic_download), null) }
+                        val songs = if (searchFilter in listOf("All", "Songs")) search.tracks else emptyList()
+                        val groups = listOf("Albums" to AccountItemKind.ALBUM, "Artists" to AccountItemKind.ARTIST)
+                            .filter { (label, _) -> searchFilter == "All" || searchFilter == label }
+                            .map { (label, kind) -> label to search.collections.filter { it.kind == kind } }
+                        search.partialError?.let { message -> item {
+                            Text(message, color = MaterialTheme.colorScheme.error)
+                            TextButton(onClick = { onSearch(search.query) }) { Text("Try again") }
+                        } }
+                        if (songs.isEmpty() && groups.all { it.second.isEmpty() } && search.partialError == null) {
+                            item { Text("No results found. Try a different search.") }
+                        }
+                        groups.filter { it.second.isNotEmpty() }.forEach { (label, results) ->
+                            if (searchFilter == "All") item {
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text(label, style = MaterialTheme.typography.titleMedium)
+                                    if (results.size > 3) TextButton(onClick = {
+                                        searchFilter = label
+                                        scope.launch { searchResultsScroll.scrollToItem(0) }
+                                    }) { Text("See all") }
                                 }
-                                if (entry != null) DownloadActions(entry, downloads, { onDownload(track) }, { onRemoveDownload(track.id) })
                             }
+                            items(if (searchFilter == "All") results.take(3) else results, key = { "${it.kind}:${it.id}" }) { item ->
+                                CatalogResultRow(item) { searchCollectionId = item.id }
                             }
                         }
-                        item {
-                            Text("Showing the first results from YouTube Music.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (songs.isNotEmpty() && searchFilter == "All") {
+                            item { Text("Songs", style = MaterialTheme.typography.titleMedium) }
+                        }
+                        items(songs, key = { it.id }) { track ->
+                            val entry = downloads.items.firstOrNull { it.track.id == track.id }
+                            SearchSongResult(track, playback, entry, lookingUpSongCollection,
+                                onPlay = { onPlay(track) },
+                                onEnqueue = {
+                                    onEnqueue(track)
+                                    scope.launch { snackbar.showSnackbar("Added to queue") }
+                                },
+                                onAddToPlaylist = { youtubeAddTrack = track },
+                                onArtist = { openSongCollection(track, AccountItemKind.ARTIST) },
+                                onAlbum = { openSongCollection(track, AccountItemKind.ALBUM) },
+                                onDownload = { onDownload(track) })
                         }
                     }
                 }
+            }
             }
             if (destination == "Search" && downloads.error != null) {
                 Text(downloads.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
@@ -279,7 +434,8 @@ fun MusicScreen(
             Spacer(Modifier.height(4.dp))
         }
     }
-    if (showAccount && !showHome) AccountSettingsDialog(account, accountActions, { showAccount = false })
+    }
+    if (showAccount) AccountSettingsDialog(account, accountActions, { showAccount = false })
     val currentTrack = playback.track
     if (currentTrack != null) {
         BackHandler(expandedPlayer) { expandedPlayer = false }
@@ -289,16 +445,59 @@ fun MusicScreen(
             enter = slideInVertically(motion.defaultSpatialSpec()) { it },
             exit = slideOutVertically(motion.defaultSpatialSpec()) { it },
         ) {
-            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+            Surface(Modifier.fillMaxSize().graphicsLayer { translationY = playerDragOffset },
+                color = MaterialTheme.colorScheme.surfaceContainerLow) {
                 Box(Modifier.statusBarsPadding()) {
                     ExpressivePlayer(playback, library.favorites.any { it.id == currentTrack.id }, onTogglePlayback,
                         onSeek, onRetryPlayback, onPrevious, onNext, onQueueItem,
+                        onMoveQueueItem = onMoveQueueItem,
                         onFavorite = { onFavorite(currentTrack, library.favorites.none { it.id == currentTrack.id }) },
-                        onDownload = { onDownload(currentTrack) }, onClose = { expandedPlayer = false })
+                        onAddToPlaylist = { youtubeAddTrack = currentTrack },
+                        onDownload = { onDownload(currentTrack) },
+                        downloadEntry = downloads.items.firstOrNull { it.track.id == currentTrack.id },
+                        onShuffle = onShuffle, onRepeat = onRepeat, onClose = { expandedPlayer = false },
+                        onDragOffset = { playerDragOffset = it },
+                        onArtist = if (findTrackArtists == null && findArtist == null || lookingUpArtist) null else { name ->
+                            lookingUpArtist = true
+                            scope.launch {
+                                val artists = try {
+                                    findTrackArtists?.invoke(currentTrack) ?: listOfNotNull(findArtist?.invoke(name))
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (_: Exception) {
+                                    emptyList()
+                                } finally {
+                                    lookingUpArtist = false
+                                }
+                                if (expandedPlayer) when (artists.size) {
+                                    0 -> playerSnackbar.showSnackbar("Couldn't open an artist page for $name.")
+                                    1 -> showPlayerArtist(artists.single())
+                                    else -> artistChoices = artists
+                                }
+                            }
+                        })
+                    SnackbarHost(playerSnackbar, Modifier.align(Alignment.BottomCenter)
+                        .navigationBarsPadding().padding(bottom = 64.dp))
                 }
             }
         }
     }
+    }
+    if (expandedPlayer && artistChoices.isNotEmpty()) {
+        AlertDialog(onDismissRequest = { artistChoices = emptyList() }, title = { Text("Go to artist") },
+            text = {
+                LazyColumn(Modifier.heightIn(max = 320.dp)) {
+                    items(artistChoices, key = { it.id }) { artist ->
+                        TextButton(onClick = { showPlayerArtist(artist) }, modifier = Modifier.fillMaxWidth()) {
+                            Text(artist.title)
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { artistChoices = emptyList() }) { Text("Cancel") } })
+    }
+    youtubeAddTrack?.let { track ->
+        YouTubePlaylistPicker(track, accountActions, onDismiss = { youtubeAddTrack = null })
     }
     addTrack?.let { track ->
         AlertDialog(onDismissRequest = { addTrack = null }, title = { Text("Add to playlist") },
@@ -334,7 +533,7 @@ fun MusicScreen(
 
 @Composable
 internal fun SongRow(track: Track, selected: Boolean, enabled: Boolean, offline: Boolean = false, onClick: () -> Unit,
-    containerColor: androidx.compose.ui.graphics.Color? = null) {
+    containerColor: androidx.compose.ui.graphics.Color? = null, compact: Boolean = false) {
     Surface(onClick = onClick, enabled = enabled,
         modifier = Modifier.fillMaxWidth().semantics {
             contentDescription = "Play ${track.title} by ${track.artist}"
@@ -342,10 +541,10 @@ internal fun SongRow(track: Track, selected: Boolean, enabled: Boolean, offline:
         shape = RoundedCornerShape(16.dp),
         color = if (selected) MaterialTheme.colorScheme.secondaryContainer
             else containerColor ?: MaterialTheme.colorScheme.surfaceContainerLow) {
-        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically,
+        Row(Modifier.padding(if (compact) 8.dp else 12.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Artwork(track.artworkUrl, Modifier.size(56.dp), offline)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Artwork(track.artworkUrl, Modifier.size(if (compact) 44.dp else 56.dp), offline)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 4.dp)) {
                 Text(track.title, style = MaterialTheme.typography.titleMedium,
                     maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(track.artist, style = MaterialTheme.typography.bodyMedium,
@@ -375,10 +574,10 @@ private fun PlaylistNameDialog(initialName: String, editing: Boolean, onDismiss:
 }
 
 @Composable
-internal fun Artwork(url: String?, modifier: Modifier, offline: Boolean = false, large: Boolean = false) {
+internal fun Artwork(url: String?, modifier: Modifier, offline: Boolean = false, large: Boolean = false, cornerRadius: androidx.compose.ui.unit.Dp = 12.dp) {
     var useOriginal by remember(url, large, offline) { mutableStateOf(false) }
     val requested = if (large && !offline && !useOriginal) largeArtworkUrl(url) else url
-    Surface(modifier = modifier.clip(RoundedCornerShape(12.dp)),
+    Surface(modifier = modifier.clip(RoundedCornerShape(cornerRadius)),
         color = MaterialTheme.colorScheme.surfaceContainerHighest) {
         if (url != null) AsyncImage(model = ImageRequest.Builder(LocalContext.current).data(requested)
             .networkCachePolicy(if (offline) CachePolicy.DISABLED else CachePolicy.ENABLED).build(), contentDescription = null,
@@ -392,7 +591,7 @@ internal fun Artwork(url: String?, modifier: Modifier, offline: Boolean = false,
 }
 
 @Composable
-private fun DownloadActions(entry: DownloadEntry, state: DownloadsState, onDownload: () -> Unit, onRemove: () -> Unit) {
+internal fun DownloadActions(entry: DownloadEntry, state: DownloadsState, onDownload: () -> Unit, onRemove: () -> Unit) {
     Column {
         if (entry.status == DownloadStatus.DOWNLOADING) {
             entry.percent?.let { percent -> LinearWavyProgressIndicator(progress = { (percent / 100f).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth()) }

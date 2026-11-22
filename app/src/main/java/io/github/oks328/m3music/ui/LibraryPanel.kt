@@ -41,6 +41,7 @@ internal fun LibraryPanel(
     onRemoveSong: (String, String) -> Unit,
     onMoveSong: (String, String, Int) -> Unit,
     onClearHistory: () -> Unit,
+    onDownloadTracks: (List<Track>) -> Unit,
     modifier: Modifier = Modifier,
     bottomClearance: androidx.compose.ui.unit.Dp = 0.dp,
 ) {
@@ -54,8 +55,7 @@ internal fun LibraryPanel(
     }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         if (selected == null) {
-            Text("Your library", style = MaterialTheme.typography.headlineSmall)
-            Text("Stored on this device", style = MaterialTheme.typography.bodyMedium,
+            Text("Playlists and favorites on this device", style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("Playlists", "Favorites", "History").forEach { name ->
@@ -70,15 +70,19 @@ internal fun LibraryPanel(
                 selected != null -> {
                     item {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            TextButton(onClick = { playlistId = null }) { Text("All playlists") }
+                            BackIconButton(onClick = { playlistId = null })
                             Artwork(selected.tracks.firstOrNull()?.artworkUrl, Modifier.size(160.dp).align(Alignment.CenterHorizontally))
                             Text(selected.name, style = MaterialTheme.typography.headlineLarge)
                             Text("${selected.tracks.size} songs · On this device", style = MaterialTheme.typography.bodyMedium)
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalAlignment = Alignment.CenterVertically) {
                                 Button(onClick = { onPlayPlaylist(selected.tracks, 0) }, enabled = playback.connected && selected.tracks.isNotEmpty(),
                                     modifier = Modifier.weight(1.4f).heightIn(min = 56.dp)) { Text("Play playlist") }
                                 FilledTonalButton(onClick = { onPlayPlaylist(selected.tracks.shuffled(), 0) }, enabled = playback.connected && selected.tracks.isNotEmpty(),
                                     modifier = Modifier.weight(1f).heightIn(min = 56.dp)) { Text("Shuffle") }
+                                CollectionDownloadButton("playlist", selected.tracks, false, downloads, false) {
+                                    onDownloadTracks(selected.tracks)
+                                }
                             }
                             Row {
                                 TextButton(onClick = { onRename(selected) }) { Text("Rename") }

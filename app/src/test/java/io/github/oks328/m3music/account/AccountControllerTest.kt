@@ -1,5 +1,6 @@
 package io.github.oks328.m3music.account
 
+import io.github.oks328.m3music.music.Track
 import kotlinx.coroutines.*
 import kotlinx.coroutines.test.*
 import org.junit.Assert.*
@@ -81,5 +82,22 @@ class AccountControllerTest {
         assertNull(store.account)
         assertNull(controller.state.value.profile)
         assertTrue(controller.state.value.page.items.isEmpty())
+    }
+    @Test fun collectionDownloadIncludesLaterPagesAndDeduplicatesSongs() = runTest {
+        fun track(id: String) = Track(id, id, "Artist", null, 0)
+        fun item(track: Track) = AccountItem(track.id, track.title, kind = AccountItemKind.SONG, track = track)
+        val first = track("first")
+        val second = track("second")
+        val third = track("third")
+        val pages = ArrayDeque(listOf(
+            AccountPage(listOf(item(first), item(second)), continuation = "last"),
+            AccountPage(listOf(item(third))),
+        ))
+        val gateway = Gateway().apply { browse = { pages.removeFirst() } }
+        val controller = AccountController(backgroundScope, MemoryStore(StoredAccount(session, profile)),
+            gateway, StandardTestDispatcher(testScheduler))
+        runCurrent()
+        val songs = controller.collectionTracks("VLtest", AccountPage(listOf(item(first)), continuation = "next"), true)
+        assertEquals(listOf(first, second, third), songs)
     }
 }
