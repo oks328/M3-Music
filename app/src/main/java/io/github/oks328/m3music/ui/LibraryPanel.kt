@@ -74,16 +74,12 @@ internal fun LibraryPanel(
                             Artwork(selected.tracks.firstOrNull()?.artworkUrl, Modifier.size(160.dp).align(Alignment.CenterHorizontally))
                             Text(selected.name, style = MaterialTheme.typography.headlineLarge)
                             Text("${selected.tracks.size} songs · On this device", style = MaterialTheme.typography.bodyMedium)
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                verticalAlignment = Alignment.CenterVertically) {
-                                Button(onClick = { onPlayPlaylist(selected.tracks, 0) }, enabled = playback.connected && selected.tracks.isNotEmpty(),
-                                    modifier = Modifier.weight(1.4f).heightIn(min = 56.dp)) { Text("Play playlist") }
-                                FilledTonalButton(onClick = { onPlayPlaylist(selected.tracks.shuffled(), 0) }, enabled = playback.connected && selected.tracks.isNotEmpty(),
-                                    modifier = Modifier.weight(1f).heightIn(min = 56.dp)) { Text("Shuffle") }
-                                CollectionDownloadButton("playlist", selected.tracks, false, downloads, false) {
-                                    onDownloadTracks(selected.tracks)
-                                }
-                            }
+                            CollectionPlaybackButtons(selected.tracks, false, playback.connected, onPlayPlaylist,
+                                downloadAction = {
+                                    CollectionDownloadButton("playlist", selected.tracks, false, downloads, false) {
+                                        onDownloadTracks(selected.tracks)
+                                    }
+                                }, playLabel = "Play playlist")
                             Row {
                                 TextButton(onClick = { onRename(selected) }) { Text("Rename") }
                                 TextButton(onClick = { onDelete(selected) }) { Text("Delete") }

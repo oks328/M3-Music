@@ -95,10 +95,15 @@ internal fun PlaylistSongPicker(
             }
             results == null -> LinearWavyProgressIndicator(Modifier.fillMaxWidth())
             results.isNullOrEmpty() -> Text("No songs found.")
-            else -> LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp),
+            else -> LazyColumn(Modifier.weight(1f)
+                .consumeWindowInsets(PaddingValues(bottom = bottomClearance)),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(bottom = bottomClearance + 16.dp)) {
                 items(results.orEmpty(), key = { it.id }) { track ->
                     PlaylistAddSongRow(track, track.id in addedIds, !saving) { onAdd(track) }
+                }
+                item(key = "playlist-search-ime-clearance") {
+                    Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.ime))
                 }
             }
         }

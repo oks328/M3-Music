@@ -219,7 +219,8 @@ fun MusicScreen(
         onSearch(query)
     }
     Box(Modifier.fillMaxSize()) {
-    Scaffold(modifier = Modifier.fillMaxSize().imePadding(), snackbarHost = { SnackbarHost(snackbar) },
+    Scaffold(modifier = Modifier.fillMaxSize(),
+        snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             if (!expandedPlayer || playback.track == null || !playerFullyOpen) {
                 Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp),
@@ -355,7 +356,8 @@ fun MusicScreen(
                 DownloadsPanel(downloads, playback, onPlayPlaylist, onDownload, onRemoveDownload,
                     insets.calculateBottomPadding(),
                     Modifier.weight(1f).fillMaxWidth())
-            } else LazyColumn(Modifier.weight(1f).fillMaxWidth(),
+            } else LazyColumn(Modifier.weight(1f).fillMaxWidth()
+                .consumeWindowInsets(PaddingValues(bottom = insets.calculateBottomPadding())),
                 state = searchResultsScroll,
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(bottom = 16.dp + insets.calculateBottomPadding())) {
@@ -441,6 +443,9 @@ fun MusicScreen(
                                 onDownload = { onDownload(track) })
                         }
                     }
+                }
+                item(key = "search-ime-clearance") {
+                    Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.ime))
                 }
             }
             }

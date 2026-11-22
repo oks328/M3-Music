@@ -1,13 +1,20 @@
 package io.github.oks328.m3music.account
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.*
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.junit4.createComposeRule
 import io.github.oks328.m3music.music.SearchState
 import io.github.oks328.m3music.music.Track
 import io.github.oks328.m3music.playback.PlaybackState
+import io.github.oks328.m3music.downloads.DownloadsState
 import io.github.oks328.m3music.ui.AccountActions
+import io.github.oks328.m3music.ui.CollectionDownloadButton
+import io.github.oks328.m3music.ui.CollectionPlaybackButtons
 import io.github.oks328.m3music.ui.MusicScreen
 import io.github.oks328.m3music.ui.theme.M3MusicTheme
 import org.junit.Assert.*
@@ -35,6 +42,20 @@ class CollectionScreenTest {
         compose.runOnIdle { assertEquals(tracks, queue); assertEquals(0, start) }
         compose.onNodeWithText("Shuffle").performClick()
         compose.runOnIdle { assertEquals(tracks.size, queue.size); assertEquals(tracks.toSet(), queue.toSet()); assertEquals(0, start) }
+    }
+
+    @Test fun shuffleRemainsAccessibleWhenItsLabelDoesNotFit() {
+        var queue = emptyList<Track>()
+        compose.setContent { M3MusicTheme {
+            Box(Modifier.width(190.dp)) {
+                CollectionPlaybackButtons(tracks, false, true, onPlay = { songs, _ -> queue = songs },
+                    downloadAction = { CollectionDownloadButton("playlist", tracks, false, DownloadsState(), false) {} })
+            }
+        } }
+        compose.onNodeWithText("Shuffle").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Shuffle").assertIsDisplayed().performClick()
+        compose.onNodeWithContentDescription("Download playlist").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(tracks.toSet(), queue.toSet()) }
     }
 
     @Test fun partialCollectionLabelsPlaybackAndEmptyCollectionCannotPlay() {

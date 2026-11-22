@@ -9,6 +9,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -78,21 +80,44 @@ internal fun CollectionHeader(
 internal fun CollectionPlaybackButtons(
     songs: List<Track>, hasMore: Boolean, connected: Boolean, onPlay: (List<Track>, Int) -> Unit,
     downloadAction: (@Composable () -> Unit)? = null,
+    playLabel: String = if (hasMore) "Play loaded" else "Play",
 ) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Button(onClick = { onPlay(songs, 0) }, enabled = connected && songs.isNotEmpty(),
-            modifier = Modifier.weight(1.4f).heightIn(min = 56.dp), shape = RoundedCornerShape(topStart = 32.dp, bottomStart = 32.dp, topEnd = 8.dp, bottomEnd = 8.dp)) {
-            Icon(painterResource(R.drawable.ic_play), null)
-            Spacer(Modifier.width(8.dp))
-            Text(if (hasMore) "Play loaded" else "Play")
+    val enabled = connected && songs.isNotEmpty()
+    val labelStyle = MaterialTheme.typography.labelLarge
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val buttonPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val reservedWidth = if (downloadAction == null) 4.dp else 56.dp
+        val buttonWidth = (maxWidth - reservedWidth) / 2
+        fun fits(label: String): Boolean = with(density) {
+            measurer.measure(label, style = labelStyle, maxLines = 1, softWrap = false).size.width.toDp() +
+                24.dp + 8.dp + 24.dp <= buttonWidth
         }
-        FilledTonalButton(onClick = { onPlay(songs.shuffled(), 0) }, enabled = connected && songs.isNotEmpty(),
-            modifier = Modifier.weight(1f).heightIn(min = 56.dp), shape = RoundedCornerShape(topStart = 8.dp, bottomStart = 8.dp, topEnd = 32.dp, bottomEnd = 32.dp)) {
-            Icon(painterResource(R.drawable.ic_shuffle), null)
-            Spacer(Modifier.width(8.dp))
-            Text("Shuffle")
+        val showPlayLabel = fits(playLabel)
+        val showShuffleLabel = fits("Shuffle")
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Button(onClick = { onPlay(songs, 0) }, enabled = enabled, contentPadding = buttonPadding,
+                modifier = Modifier.weight(1f).heightIn(min = 56.dp),
+                shape = RoundedCornerShape(topStart = 32.dp, bottomStart = 32.dp, topEnd = 8.dp, bottomEnd = 8.dp)) {
+                Icon(painterResource(R.drawable.ic_play), if (showPlayLabel) null else playLabel)
+                if (showPlayLabel) {
+                    Spacer(Modifier.width(8.dp))
+                    Text(playLabel, style = labelStyle, maxLines = 1, softWrap = false)
+                }
+            }
+            FilledTonalButton(onClick = { onPlay(songs.shuffled(), 0) }, enabled = enabled, contentPadding = buttonPadding,
+                modifier = Modifier.weight(1f).heightIn(min = 56.dp),
+                shape = RoundedCornerShape(topStart = 8.dp, bottomStart = 8.dp, topEnd = 32.dp, bottomEnd = 32.dp)) {
+                Icon(painterResource(R.drawable.ic_shuffle), if (showShuffleLabel) null else "Shuffle")
+                if (showShuffleLabel) {
+                    Spacer(Modifier.width(8.dp))
+                    Text("Shuffle", style = labelStyle, maxLines = 1, softWrap = false)
+                }
+            }
+            downloadAction?.invoke()
         }
-        downloadAction?.invoke()
     }
 }
 
