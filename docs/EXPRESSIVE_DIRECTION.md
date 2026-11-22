@@ -60,6 +60,14 @@ artwork requests a higher resolution only for recognized Google thumbnail
 formats, falling back to the supplied image; downloaded playback keeps original
 cache-only artwork behavior.
 
+## Next design pass
+
+- Review the Google Sans Flex typography and identify refinements to heading hierarchy, width, and readability.
+- Review the overall app feel, including animation timing, gestures, and transitions between screens and player states.
+- Explore whether to offer a per-song theme derived from the current track's artwork.
+- Design and test the tablet layout.
+- Design and generate the M3 MUSIC app icon.
+
 ## Sources
 
 - [Start building with Material 3 Expressive](https://m3.material.io/blog/building-with-m3-expressive)
