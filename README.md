@@ -4,26 +4,40 @@ M3 MUSIC is a focused Android music player with a Material 3 Expressive interfac
 and an unofficial YouTube Music integration. It is independent of Google and
 YouTube.
 
+## App showcase
+
+| Discover | Live Search |
+| :---: | :---: |
+| <img src="docs/showcase/home.webp" width="240" alt="Home with YouTube Music recommendations and the floating navigation bar"> | <img src="docs/showcase/search.webp" width="240" alt="Live Search with filters for songs, albums, and artists"> |
+
+| Now Playing | Offline Library |
+| :---: | :---: |
+| <img src="docs/showcase/now-playing.webp" width="240" alt="Expanded Now Playing with album artwork, a seek bar, and playback controls"> | <img src="docs/showcase/downloads.webp" width="240" alt="Downloads organized into downloaded songs, playlists, and albums"> |
+
+## Features
+
+- **Discover** YouTube Music recommendations and featured collections on Home.
+- **Search as you type** for songs, albums, and artists, with filters and recent searches.
+- **Manage your Library** with YouTube Music playlists, liked songs, saved albums,
+  and followed artists alongside your on-device playlists. Create a playlist or
+  add a track from Search or Now Playing.
+- **Listen offline** with downloads grouped into Downloaded Songs, Playlists, and
+  Albums. Home and Search offer a shortcut to Downloads while offline. Set
+  Wi-Fi-only downloads under **Account → Settings**.
+- **Control playback** from the mini-player, expanded Now Playing, or lock
+  screen. Seek, shuffle, repeat, and drag songs to reorder the queue. Media3
+  handles background playback and audio focus.
+- **Make it yours** with Google Sans Flex, Material 3 Expressive motion, and an
+  adaptive launcher icon. Wallpaper colors are available on Android 12 and later.
+  Older devices use the built-in light and dark palettes.
+
 ## Version 1.0 (testing)
 
-This is the first QA version. It requires Android 8.0 (API 26) or later and a
-Google account. Sign-in opens Google's web page in Android WebView. Search,
-streaming, and downloading require an internet connection. Previously downloaded
-songs can play offline with a saved session.
-
-- **Home** shows YouTube Music recommendations and featured collections.
-- **Search** finds songs, albums, and artists and keeps recent searches.
-- **Library** brings together YouTube Music playlists, liked songs, saved albums,
-  and followed artists. Downloads and on-device playlists have their own sections.
-  You can create YouTube Music playlists and add tracks from Search or Now Playing.
-- **Downloads** supports songs, albums, and playlists. Completed downloads play
-  from app-private storage and are removed when the app is uninstalled.
-- **Now Playing** expands from the mini-player with a swipe or tap. It includes
-  seeking, shuffle, repeat, and a reorderable queue. Media3 handles background
-  playback, audio focus, and lock-screen controls.
-- **Appearance** uses Google Sans Flex, an adaptive launcher icon, and Material 3
-  Expressive motion. Wallpaper colors are available on Android 12 and later.
-  Older devices use the built-in light and dark palettes.
+M3 MUSIC requires Android 8.0 (API 26) or later and a Google account. Sign-in
+opens Google's web page in Android WebView. Search, streaming, and downloading
+require an internet connection. Previously downloaded songs can play offline
+with a saved session. Downloads are stored privately and removed when the app
+is uninstalled.
 
 ### Known issues
 
