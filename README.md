@@ -31,7 +31,11 @@ YouTube.
   adaptive launcher icon. Wallpaper colors are available on Android 12 and later.
   Older devices use the built-in light and dark palettes.
 
-## Version 1.0 (testing)
+## Version 1.1.0 (testing)
+
+This QA build adds live Search, saved playlist downloads, a consistent Library
+layout, and an app Settings page. Home and Search offer a direct link to
+Downloads when offline.
 
 M3 MUSIC requires Android 8.0 (API 26) or later and a Google account. Sign-in
 opens Google's web page in Android WebView. Search, streaming, and downloading
