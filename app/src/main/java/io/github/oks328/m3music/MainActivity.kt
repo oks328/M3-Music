@@ -62,6 +62,7 @@ class MainActivity : ComponentActivity() {
                     searchHistory = model.searchHistory.collectAsStateWithLifecycle().value,
                     onClearSearchHistory = model::clearSearchHistory,
                     loadDiscovery = account.controller::discovery,
+                    online = model.online.collectAsStateWithLifecycle().value,
                     loadDiscoveryCollection = account.controller::discoveryCollection,
                     findTrackArtists = model::findTrackArtists,
                     findSongCollection = model::findSongCollection,

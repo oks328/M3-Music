@@ -160,6 +160,15 @@ class MusicScreenTest {
         compose.onNodeWithContentDescription("Play Instant result by Artist").assertIsDisplayed()
     }
 
+    @Test fun offlineHomeOpensDownloads() {
+        compose.setContent { M3MusicTheme {
+            MusicScreen(SearchState(), PlaybackState(connected = true), {}, {}, {}, {}, {}, online = false)
+        } }
+        compose.onNodeWithText("Looks like you're offline").assertIsDisplayed()
+        compose.onNodeWithText("Go to Downloads").performClick()
+        compose.onNodeWithText("Downloaded Songs").assertIsDisplayed()
+    }
+
     @Test fun offlineSearchOpensDownloads() {
         compose.setContent { M3MusicTheme {
             MusicScreen(SearchState(query = "Artist", hasSearched = true, offline = true),

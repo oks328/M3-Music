@@ -5,6 +5,7 @@ package io.github.oks328.m3music
 import android.app.Application
 import android.content.ComponentName
 import android.net.ConnectivityManager
+import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Bundle
@@ -27,8 +28,12 @@ import io.github.oks328.m3music.downloads.OfflineDownloads
 import io.github.oks328.m3music.downloads.DownloadedCollection
 import io.github.oks328.m3music.downloads.DownloadStatus
 import io.github.oks328.m3music.library.LocalLibrary
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
@@ -39,15 +44,34 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val downloads = offlineDownloads.state
     private val catalog = io.github.oks328.m3music.account.YouTubeAccountClient()
     private val connectivity = application.getSystemService(ConnectivityManager::class.java)
+    private fun isOnline(): Boolean = connectivity?.let { manager ->
+        manager.getNetworkCapabilities(manager.activeNetwork)
+            ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    } == true
+
+    val online = callbackFlow {
+        val manager = connectivity
+        if (manager == null) {
+            trySend(false)
+            close()
+            return@callbackFlow
+        }
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+                trySend(capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET))
+            }
+
+            override fun onLost(network: Network) {
+                trySend(false)
+            }
+        }
+        manager.registerDefaultNetworkCallback(callback)
+        trySend(isOnline())
+        awaitClose { manager.unregisterNetworkCallback(callback) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), isOnline())
+
     private val searchController = SearchController(viewModelScope, catalog::searchCollections,
-        isOnline = {
-            connectivity?.let { manager ->
-                manager.getNetworkCapabilities(manager.activeNetwork)
-                    ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            } == true
-        },
-        searchCatalog = YouTubeMusicRepository::search,
-    )
+        isOnline = ::isOnline, searchCatalog = YouTubeMusicRepository::search)
     val search = searchController.state
     suspend fun findTrackArtists(track: Track) = catalog.findTrackArtists(track)
     suspend fun findSongCollection(track: Track, kind: io.github.oks328.m3music.account.AccountItemKind) =

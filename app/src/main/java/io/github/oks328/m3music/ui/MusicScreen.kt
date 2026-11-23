@@ -91,6 +91,7 @@ fun MusicScreen(
     onClearSearchHistory: () -> Unit = {},
     onRememberSearch: (String) -> Unit = {},
     loadDiscovery: suspend () -> List<DiscoveryShelf> = { emptyList() },
+    online: Boolean = true,
     loadDiscoveryCollection: suspend (String) -> AccountPage = { AccountPage() },
     findArtist: (suspend (String) -> AccountItem?)? = null,
     findTrackArtists: (suspend (Track) -> List<AccountItem>)? = null,
@@ -234,6 +235,12 @@ fun MusicScreen(
         onRememberSearch(term)
         if (term != requestedTerm || search.error != null || search.offline) requestSearch(term)
     }
+    val openDownloads = {
+        keyboard?.hide()
+        openedCatalog = null
+        librarySection = "Downloads"
+        destination = "Library"
+    }
     Box(Modifier.fillMaxSize()) {
     Scaffold(modifier = Modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snackbar) },
@@ -333,6 +340,8 @@ fun MusicScreen(
                         settlePlayer(returnToPlayer && playback.track != null, 0f)
                         returnToPlayer = false
                     }, modifier = Modifier.weight(1f).fillMaxWidth())
+            } else if (showHome && !online) {
+                OfflineNotice(onOpenDownloads = openDownloads)
             } else if (showHome) {
                 DiscoveryPanel(account, loadDiscovery, loadDiscoveryCollection, playback, onPlayPlaylist,
                     insets.calculateBottomPadding(),
@@ -400,19 +409,7 @@ fun MusicScreen(
                             Text("Searching YouTube Music…", style = MaterialTheme.typography.bodyMedium)
                         }
                     }
-                    search.offline -> item {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Looks like you're offline", style = MaterialTheme.typography.titleLarge)
-                            Text("You can still play music you've saved in Downloads.",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            FilledTonalButton(onClick = {
-                                keyboard?.hide()
-                                openedCatalog = null
-                                librarySection = "Downloads"
-                                destination = "Library"
-                            }) { Text("Go to Downloads") }
-                        }
-                    }
+                    search.offline -> item { OfflineNotice(onOpenDownloads = openDownloads) }
                     search.error != null -> item {
                         Text(search.error, color = MaterialTheme.colorScheme.error)
                         TextButton(onClick = { requestSearch(searchTerm) }) { Text("Try again") }

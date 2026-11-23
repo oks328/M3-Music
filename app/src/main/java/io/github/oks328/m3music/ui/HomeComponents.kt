@@ -79,3 +79,14 @@ private fun SettingsToggle(label: String, checked: Boolean, onCheckedChange: (Bo
         Switch(checked = checked, onCheckedChange = null)
     }
 }
+
+
+@Composable
+internal fun OfflineNotice(onOpenDownloads: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Looks like you're offline", style = MaterialTheme.typography.titleLarge)
+        Text("You can still play music you've saved in Downloads.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        FilledTonalButton(onClick = onOpenDownloads) { Text("Go to Downloads") }
+    }
+}
