@@ -36,7 +36,8 @@ class OfflineDownloads private constructor(private val context: Context) {
     private val ready = CompletableDeferred<Unit>()
     private val mutableState = MutableStateFlow(DownloadsState(
         wifiOnly = preferences.getBoolean("wifiOnly", true),
-        albums = DownloadMetadata.decodeAlbums(preferences.getString("albums", null)),
+        albums = DownloadMetadata.decodeCollections(preferences.getString("albums", null)),
+        playlists = DownloadMetadata.decodeCollections(preferences.getString("playlists", null)),
     ))
     val state = mutableState.asStateFlow()
     private val preparing = linkedMapOf<String, Track>()
@@ -67,11 +68,20 @@ class OfflineDownloads private constructor(private val context: Context) {
         }
     }
 
-    fun downloadAlbum(album: DownloadedAlbum, tracks: List<Track>) {
+    fun downloadAlbum(album: DownloadedCollection, tracks: List<Track>) =
+        downloadCollection(album, tracks, isPlaylist = false)
+
+    fun downloadPlaylist(playlist: DownloadedCollection, tracks: List<Track>) =
+        downloadCollection(playlist, tracks, isPlaylist = true)
+
+    private fun downloadCollection(collection: DownloadedCollection, tracks: List<Track>, isPlaylist: Boolean) {
         if (tracks.isEmpty()) return
-        val albums = listOf(album) + mutableState.value.albums.filterNot { it.id == album.id }
-        preferences.edit().putString("albums", DownloadMetadata.encodeAlbums(albums)).apply()
-        mutableState.value = mutableState.value.copy(albums = albums)
+        val previous = mutableState.value
+        val existing = if (isPlaylist) previous.playlists else previous.albums
+        val updated = listOf(collection) + existing.filterNot { it.id == collection.id }
+        val key = if (isPlaylist) "playlists" else "albums"
+        preferences.edit().putString(key, DownloadMetadata.encodeCollections(updated)).apply()
+        mutableState.value = if (isPlaylist) previous.copy(playlists = updated) else previous.copy(albums = updated)
         download(tracks)
     }
 

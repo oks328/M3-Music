@@ -58,6 +58,7 @@ class MainActivity : ComponentActivity() {
                     search = model.search.collectAsStateWithLifecycle().value,
                     playback = model.playback.collectAsStateWithLifecycle().value,
                     onSearch = model::search,
+                    onRememberSearch = model::rememberSearch,
                     searchHistory = model.searchHistory.collectAsStateWithLifecycle().value,
                     onClearSearchHistory = model::clearSearchHistory,
                     loadDiscovery = account.controller::discovery,
@@ -78,9 +79,9 @@ class MainActivity : ComponentActivity() {
                         requestDownloadNotifications()
                         model.downloadAlbum(album, tracks)
                     },
-                    onDownloadTracks = { tracks ->
+                    onDownloadPlaylist = { playlist, tracks ->
                         requestDownloadNotifications()
-                        model.download(tracks)
+                        model.downloadPlaylist(playlist, tracks)
                     },
                     onRemoveDownload = model::removeDownload,
                     onWifiOnlyChanged = model::setWifiOnly,

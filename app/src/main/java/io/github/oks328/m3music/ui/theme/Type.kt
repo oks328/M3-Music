@@ -10,6 +10,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.sp
 
 internal class MusicTypeStyles private constructor(private val assets: AssetManager, private val density: Density) {
     companion object {
@@ -67,7 +68,7 @@ internal class MusicTypeStyles private constructor(private val assets: AssetMana
         labelSmall = baseline.labelSmall.googleSans(570, 99f, 0f, 34f),
     )
 
-    val brandTitle = baseline.titleLarge.heading1()
+    val brandTitle = baseline.titleLarge.copy(fontSize = 26.sp, lineHeight = 32.sp).heading1()
     val selectedNavigationLabel = baseline.labelMedium.googleSans(650, 98f, 0f, 48f)
     val compactTrackTitle = baseline.titleMedium.googleSans(650, 98f, 0f, 43f)
     val expandedTrackTitle = baseline.headlineMedium.heading2()

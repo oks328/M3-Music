@@ -26,11 +26,13 @@ data class SearchState(
     val error: String? = null,
     val collections: List<AccountItem> = emptyList(),
     val partialError: String? = null,
+    val offline: Boolean = false,
 )
 
 class SearchController(
     private val scope: CoroutineScope,
     private val searchCollections: suspend (String) -> List<AccountItem> = { emptyList() },
+    private val isOnline: () -> Boolean = { true },
     private val searchCatalog: suspend (String) -> List<Track>,
 ) {
     private val mutableState = MutableStateFlow(SearchState())
@@ -50,6 +52,10 @@ class SearchController(
         val normalized = query.trim()
         if (normalized.isEmpty()) {
             mutableState.value = SearchState()
+            return
+        }
+        if (!isOnline()) {
+            mutableState.value = SearchState(query = normalized, hasSearched = true, offline = true)
             return
         }
         mutableState.value = SearchState(query = normalized, loading = true)
@@ -72,10 +78,12 @@ class SearchController(
                 throw cancelled
             } catch (failure: Exception) {
                 ensureActive()
+                val offline = !isOnline()
                 mutableState.value = SearchState(
                     query = normalized,
+                    offline = offline,
                     hasSearched = true,
-                    error = if (failure is java.io.IOException)
+                    error = if (offline) null else if (failure is java.io.IOException)
                         "Couldn't reach YouTube Music. Check your connection and try again."
                     else "YouTube Music couldn't complete this search. Please try again later.",
                 )

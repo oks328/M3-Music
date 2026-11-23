@@ -6,9 +6,9 @@ import org.junit.Test
 
 class DownloadAlbumTest {
     @Test fun persistedAlbumRetainsItsOrderedTrackIds() {
-        val album = DownloadedAlbum("MPREtest", "Album", null, null, listOf("second", "first"))
-        assertEquals(listOf(album), DownloadMetadata.decodeAlbums(DownloadMetadata.encodeAlbums(listOf(album))))
-        assertEquals(emptyList<DownloadedAlbum>(), DownloadMetadata.decodeAlbums(null))
+        val album = DownloadedCollection("MPREtest", "Album", null, null, listOf("second", "first"))
+        assertEquals(listOf(album), DownloadMetadata.decodeCollections(DownloadMetadata.encodeCollections(listOf(album))))
+        assertEquals(emptyList<DownloadedCollection>(), DownloadMetadata.decodeCollections(null))
     }
 
     @Test fun albumProgressCountsCompletedPartialAndMissingTracks() {

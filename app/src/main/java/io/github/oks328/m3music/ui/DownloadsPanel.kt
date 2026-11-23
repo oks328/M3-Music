@@ -3,8 +3,9 @@ package io.github.oks328.m3music.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -33,11 +34,12 @@ internal fun DownloadsPanel(
     BackHandler(selected != null) { selected = null }
     val entries = downloads.items.associateBy { it.track.id }
     val allSongs = downloads.items.filter { it.status == DownloadStatus.COMPLETED }
-    val album = downloads.albums.firstOrNull { it.id == selected }
+    val collection = downloads.albums.firstOrNull { "album:${it.id}" == selected || it.id == selected }
+        ?: downloads.playlists.firstOrNull { "playlist:${it.id}" == selected }
     val viewingSongs = selected == "songs"
-    val detail = album?.trackIds?.mapNotNull(entries::get) ?: allSongs
+    val detail = collection?.trackIds?.mapNotNull(entries::get) ?: allSongs
     val songs = detail.filter { it.status == DownloadStatus.COMPLETED }.map { it.track }
-    val groupedIds = downloads.albums.flatMap { it.trackIds }.toSet()
+    val groupedIds = (downloads.albums + downloads.playlists).flatMap { it.trackIds }.toSet()
     val outstanding = downloads.items.filter { it.status != DownloadStatus.COMPLETED && it.track.id !in groupedIds }
     val downloadRow: @Composable (DownloadEntry) -> Unit = { entry ->
         val saved = entry.status == DownloadStatus.COMPLETED
@@ -72,23 +74,17 @@ internal fun DownloadsPanel(
         }
     }
     key(selected) {
-        LazyColumn(modifier, verticalArrangement = Arrangement.spacedBy(if (selected == null) 12.dp else 4.dp),
+        LazyColumn(modifier, verticalArrangement = Arrangement.spacedBy(4.dp),
             contentPadding = PaddingValues(bottom = bottomClearance + 16.dp)) {
             downloads.error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
             if (downloads.loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-            if (viewingSongs || album != null) {
+            if (viewingSongs || collection != null) {
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            BackIconButton(onClick = { selected = null })
-                            Text(album?.title ?: "Downloaded Songs", style = MaterialTheme.typography.headlineMedium)
-                        }
-                        if (album != null) {
-                            Artwork(album.artworkUrl, Modifier.size(160.dp).align(Alignment.CenterHorizontally),
-                                offline = true, cornerRadius = 24.dp)
-                            album.artist?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                        }
-                        Text(offlineSongCount(songs.size), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        BackIconButton(onClick = { selected = null })
+                        LibraryCollectionTitle(collection?.title ?: "Downloaded Songs", collection?.artworkUrl,
+                            subtitle = collection?.artist.orEmpty(), metadata = offlineSongCount(songs.size),
+                            offline = true, showArtwork = collection != null)
                         CollectionPlaybackButtons(songs, false, playback.connected, onPlayPlaylist)
                         Spacer(Modifier.height(4.dp))
                     }
@@ -97,41 +93,41 @@ internal fun DownloadsPanel(
                 items(detail, key = { it.track.id }) { downloadRow(it) }
             } else {
                 item {
-                    DownloadGroupRow("Downloaded Songs", offlineSongCount(allSongs.size), artwork = null,
-                        onClick = { selected = "songs" })
+                    LibraryCollectionRow("Downloaded Songs", offlineSongCount(allSongs.size), artwork = null,
+                        fallbackIcon = R.drawable.ic_download, onClick = { selected = "songs" })
                 }
-                val visibleAlbums = downloads.albums.filter { group -> group.trackIds.any(entries::containsKey) }
-                if (visibleAlbums.isNotEmpty()) item { Text("Albums", style = MaterialTheme.typography.headlineSmall) }
-                items(visibleAlbums, key = { it.id }) { group ->
-                    val completed = group.trackIds.count { entries[it]?.status == DownloadStatus.COMPLETED }
-                    val summary = if (completed == group.trackIds.size) offlineSongCount(completed)
-                        else "$completed of ${group.trackIds.size} songs ready offline"
-                    DownloadGroupRow(group.title, summary, group.artworkUrl, onClick = { selected = group.id })
-                }
-                if (outstanding.isNotEmpty()) item { Text("In progress", style = MaterialTheme.typography.titleMedium) }
+                downloadedGroups("Playlists", "playlist", downloads.playlists, entries) { selected = it }
+                downloadedGroups("Albums", "album", downloads.albums, entries) { selected = it }
+                if (outstanding.isNotEmpty()) item { DownloadSectionTitle("In progress") }
                 items(outstanding, key = { it.track.id }) { downloadRow(it) }
             }
         }
     }
 }
 
-@Composable
-private fun DownloadGroupRow(title: String, subtitle: String, artwork: String?, onClick: () -> Unit) {
-    Surface(onClick = onClick, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.secondaryContainer) {
-        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (artwork == null) {
-                Box(Modifier.size(56.dp), contentAlignment = Alignment.Center) {
-                    Icon(painterResource(R.drawable.ic_download), null)
-                }
-            } else Artwork(artwork, Modifier.size(56.dp), offline = true)
-            Column {
-                Text(title, style = MaterialTheme.typography.titleMedium)
-                Text(subtitle, style = MaterialTheme.typography.bodyMedium)
-            }
-        }
+private fun LazyListScope.downloadedGroups(
+    title: String,
+    kind: String,
+    collections: List<DownloadedCollection>,
+    entries: Map<String, DownloadEntry>,
+    onOpen: (String) -> Unit,
+) {
+    val visible = collections.filter { group -> group.trackIds.any(entries::containsKey) }
+    if (visible.isEmpty()) return
+    item { DownloadSectionTitle(title) }
+    itemsIndexed(visible, key = { _, group -> "$kind:${group.id}" }) { index, group ->
+        val completed = group.trackIds.count { entries[it]?.status == DownloadStatus.COMPLETED }
+        val summary = if (completed == group.trackIds.size) offlineSongCount(completed)
+            else "$completed of ${group.trackIds.size} songs ready offline"
+        LibraryCollectionRow(group.title, summary, group.artworkUrl, offline = true,
+            first = index == 0, last = index == visible.lastIndex) { onOpen("$kind:${group.id}") }
     }
+}
+
+@Composable
+private fun DownloadSectionTitle(title: String) {
+    Text(title, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+        style = MaterialTheme.typography.titleLarge)
 }
 
 private fun offlineSongCount(count: Int): String =

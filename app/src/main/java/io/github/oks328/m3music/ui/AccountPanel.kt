@@ -3,16 +3,12 @@
 package io.github.oks328.m3music.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -48,8 +44,6 @@ internal fun AccountPanel(
     onDownload: (Track) -> Unit,
     collectionDownload: @Composable (AccountItem, AccountPage) -> Unit,
     candidates: List<Track>,
-    showSettings: Boolean = false,
-    onDismissSettings: () -> Unit = {},
     playingTrackId: String? = null,
     modifier: Modifier = Modifier,
     bottomClearance: androidx.compose.ui.unit.Dp = 0.dp,
@@ -129,17 +123,9 @@ internal fun AccountPanel(
                     Button(onClick = actions.signIn) { Text("Reconnect Google account") }
                 } else {
                     if (collection == null) item {
-                        Row(Modifier.horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            AccountCategory.entries.forEach { category ->
-                                FilterChip(selected = state.category == category,
-                                    onClick = { playLikedWhenLoaded = false; actions.category(category) },
-                                    label = {
-                                        Text(if (category == AccountCategory.ARTISTS) "Artists" else category.label,
-                                            style = MaterialTheme.typography.labelMedium)
-                                    })
-                            }
-                        }
+                        LibraryFilters(AccountCategory.entries, state.category,
+                            label = { if (it == AccountCategory.ARTISTS) "Artists" else it.label },
+                            onSelect = { playLikedWhenLoaded = false; actions.category(it) })
                     }
                     if (collection != null) item {
                         CollectionHeader(collection.copy(artworkUrl = page.artworkUrl ?: collection.artworkUrl), page.items.mapNotNull { it.track }, page.continuation != null,
@@ -152,11 +138,7 @@ internal fun AccountPanel(
                     }
                     else when (state.category) {
                         AccountCategory.PLAYLISTS -> item {
-                            FilledTonalButton(onClick = { name = ""; naming = true }, enabled = !state.mutating) {
-                                Icon(painterResource(R.drawable.ic_add_playlist), null, Modifier.size(18.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Text("New playlist")
-                            }
+                            NewLibraryPlaylistButton(onClick = { name = ""; naming = true }, enabled = !state.mutating)
                         }
                         AccountCategory.LIKED_SONGS -> item {
                             FilledTonalButton(onClick = { playLikedWhenLoaded = true },
@@ -187,8 +169,11 @@ internal fun AccountPanel(
                             else "No songs are available in this collection.")
                     }
                     if (collection == null && page.items.isNotEmpty() && page.items.all { it.track == null }) {
-                        items(page.items, key = { it.key }) { entry ->
-                            AccountLibraryRow(entry, onClick = { actions.open(entry) })
+                        itemsIndexed(page.items, key = { _, entry -> entry.key }) { index, entry ->
+                            LibraryCollectionRow(entry.title, entry.subtitle, entry.artworkUrl,
+                                artist = entry.kind == AccountItemKind.ARTIST,
+                                first = index == 0, last = index == page.items.lastIndex,
+                                onClick = { actions.open(entry) })
                         }
                     } else if (page.items.isNotEmpty() && page.items.all { it.track == null }) {
                         items(page.items.chunked(2), key = { it.first().key }) { pair ->
@@ -237,7 +222,6 @@ internal fun AccountPanel(
             }
         }
     }
-    if (showSettings) AccountSettingsDialog(state, actions, onDismissSettings)
     if (naming) AlertDialog(onDismissRequest = { naming = false },
         title = { Text(if (collection == null) "New private YouTube playlist" else "Rename YouTube playlist") },
         text = { OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("YouTube playlist name") }, singleLine = true) },
@@ -256,24 +240,4 @@ internal fun AccountPanel(
             collection?.let { actions.perform(AccountAction.RemoveSong(it.id, target.id, requireNotNull(target.setVideoId))) }
             removing = null
         }) { Text("Remove on YouTube") } }, dismissButton = { TextButton(onClick = { removing = null }) { Text("Cancel") } }) }
-}
-
-@Composable
-private fun AccountLibraryRow(entry: AccountItem, onClick: () -> Unit) {
-    Surface(onClick = onClick, modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface) {
-        Row(Modifier.padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Artwork(entry.artworkUrl, Modifier.size(52.dp),
-                cornerRadius = if (entry.kind == AccountItemKind.ARTIST) 26.dp else 10.dp)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(entry.title, style = MaterialTheme.typography.titleMedium,
-                    maxLines = 2, overflow = TextOverflow.Ellipsis)
-                if (entry.subtitle.isNotBlank()) {
-                    Text(entry.subtitle, style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
-        }
-    }
 }

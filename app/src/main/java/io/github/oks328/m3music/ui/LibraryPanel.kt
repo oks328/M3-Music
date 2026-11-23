@@ -1,25 +1,21 @@
 package io.github.oks328.m3music.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.style.TextOverflow
 import io.github.oks328.m3music.R
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import io.github.oks328.m3music.downloads.DownloadStatus
+import io.github.oks328.m3music.downloads.DownloadedCollection
 import io.github.oks328.m3music.downloads.DownloadsState
 import io.github.oks328.m3music.library.LibraryState
 import io.github.oks328.m3music.library.LocalPlaylist
@@ -41,7 +37,7 @@ internal fun LibraryPanel(
     onRemoveSong: (String, String) -> Unit,
     onMoveSong: (String, String, Int) -> Unit,
     onClearHistory: () -> Unit,
-    onDownloadTracks: (List<Track>) -> Unit,
+    onDownloadPlaylist: (DownloadedCollection, List<Track>) -> Unit,
     modifier: Modifier = Modifier,
     bottomClearance: androidx.compose.ui.unit.Dp = 0.dp,
 ) {
@@ -53,31 +49,29 @@ internal fun LibraryPanel(
     LaunchedEffect(state.playlists, state.loading) {
         if (!state.loading && playlistId != null && selected == null) playlistId = null
     }
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (selected == null) {
-            Text("Playlists and favorites on this device", style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("Playlists", "Favorites", "History").forEach { name ->
-                    FilterChip(selected = section == name, onClick = { section = name }, label = { Text(name) })
-                }
-            }
+            LibraryFilters(listOf("Playlists", "Favorites", "History"), section, label = { it }) { section = it }
         }
         if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-        else LazyColumn(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp),
+        else LazyColumn(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(if (selected == null) 4.dp else 12.dp),
             contentPadding = PaddingValues(bottom = 16.dp + bottomClearance)) {
             when {
                 selected != null -> {
                     item {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             BackIconButton(onClick = { playlistId = null })
-                            Artwork(selected.tracks.firstOrNull()?.artworkUrl, Modifier.size(160.dp).align(Alignment.CenterHorizontally))
-                            Text(selected.name, style = MaterialTheme.typography.headlineLarge)
-                            Text("${selected.tracks.size} songs · On this device", style = MaterialTheme.typography.bodyMedium)
+                            LibraryCollectionTitle(selected.name, selected.tracks.firstOrNull()?.artworkUrl,
+                                metadata = "${selected.tracks.size} songs on this device")
                             CollectionPlaybackButtons(selected.tracks, false, playback.connected, onPlayPlaylist,
                                 downloadAction = {
-                                    CollectionDownloadButton("playlist", selected.tracks, false, downloads, false) {
-                                        onDownloadTracks(selected.tracks)
+                                    val artwork = selected.tracks.firstOrNull()?.artworkUrl
+                                    val collection = DownloadedCollection(
+                                        "local:${selected.id}", selected.name, null, artwork,
+                                        selected.tracks.map { it.id }.distinct())
+                                    CollectionDownloadButton("playlist", selected.tracks, false, downloads, false,
+                                        collectionId = collection.id) {
+                                        onDownloadPlaylist(collection, selected.tracks)
                                     }
                                 }, playLabel = "Play playlist")
                             Row {
@@ -113,20 +107,12 @@ internal fun LibraryPanel(
                     }
                 }
                 section == "Playlists" -> {
-                    item { Button(onClick = onCreate) { Text("New playlist") } }
+                    item { NewLibraryPlaylistButton(onClick = onCreate) }
                     if (state.playlists.isEmpty()) item { Text("Make a playlist for your next listen.") }
-                    items(state.playlists, key = { it.id }) { playlist ->
-                        Surface(onClick = { playlistId = playlist.id }, modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
-                            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                Artwork(playlist.tracks.firstOrNull()?.artworkUrl, Modifier.size(64.dp))
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text(playlist.name, style = MaterialTheme.typography.titleMedium)
-                                Text("${playlist.tracks.size} songs", style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            }
-                        }
+                    itemsIndexed(state.playlists, key = { _, playlist -> playlist.id }) { index, playlist ->
+                        LibraryCollectionRow(playlist.name, "${playlist.tracks.size} songs",
+                            playlist.tracks.firstOrNull()?.artworkUrl, first = index == 0, last = index == state.playlists.lastIndex,
+                            onClick = { playlistId = playlist.id })
                     }
                 }
                 else -> {

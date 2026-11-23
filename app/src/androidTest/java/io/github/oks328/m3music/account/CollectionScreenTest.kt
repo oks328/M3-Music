@@ -107,7 +107,11 @@ class CollectionScreenTest {
                     assertTrue(fromLibrary)
                     tracks + extra
                 },
-                onDownloadTracks = { queued = it })
+                onDownloadPlaylist = { playlist, songs ->
+                    assertEquals("VLtest", playlist.id)
+                    assertEquals((tracks + extra).map { it.id }, playlist.trackIds)
+                    queued = songs
+                })
         } }
         compose.onNodeWithText("Library").performClick()
         compose.onNodeWithContentDescription("Download playlist").performScrollTo().performClick()
@@ -122,9 +126,11 @@ class CollectionScreenTest {
                     searchSongs = { listOf(tracks.last()) }, perform = { action = it }))
         } }
         compose.onNodeWithText("Library").performClick()
-        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Suggestions"))
+        val tracklist = compose.onNode(hasScrollAction() and SemanticsMatcher.keyIsDefined(
+            androidx.compose.ui.semantics.SemanticsProperties.VerticalScrollAxisRange))
+        tracklist.performScrollToNode(hasText("Suggestions"))
         compose.onNodeWithText("Suggestions").assertIsDisplayed()
-        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Add a song"))
+        tracklist.performScrollToNode(hasText("Add a song"))
         compose.onNodeWithText("Add a song", useUnmergedTree = true).performClick()
         compose.onNodeWithText("Search songs").performTextInput("Second")
         compose.onNodeWithContentDescription("Submit song search").performClick()

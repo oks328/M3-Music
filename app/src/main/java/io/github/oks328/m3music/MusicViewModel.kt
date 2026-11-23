@@ -4,6 +4,8 @@ package io.github.oks328.m3music
 
 import android.app.Application
 import android.content.ComponentName
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Bundle
 import java.util.UUID
@@ -22,7 +24,7 @@ import io.github.oks328.m3music.playback.PlaybackService
 import io.github.oks328.m3music.playback.PlaybackState
 import io.github.oks328.m3music.playback.RepeatMode
 import io.github.oks328.m3music.downloads.OfflineDownloads
-import io.github.oks328.m3music.downloads.DownloadedAlbum
+import io.github.oks328.m3music.downloads.DownloadedCollection
 import io.github.oks328.m3music.downloads.DownloadStatus
 import io.github.oks328.m3music.library.LocalLibrary
 import kotlinx.coroutines.delay
@@ -36,7 +38,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val offlineDownloads = OfflineDownloads.get(application)
     val downloads = offlineDownloads.state
     private val catalog = io.github.oks328.m3music.account.YouTubeAccountClient()
-    private val searchController = SearchController(viewModelScope, catalog::searchCollections, YouTubeMusicRepository::search)
+    private val connectivity = application.getSystemService(ConnectivityManager::class.java)
+    private val searchController = SearchController(viewModelScope, catalog::searchCollections,
+        isOnline = {
+            connectivity?.let { manager ->
+                manager.getNetworkCapabilities(manager.activeNetwork)
+                    ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            } == true
+        },
+        searchCatalog = YouTubeMusicRepository::search,
+    )
     val search = searchController.state
     suspend fun findTrackArtists(track: Track) = catalog.findTrackArtists(track)
     suspend fun findSongCollection(track: Track, kind: io.github.oks328.m3music.account.AccountItemKind) =
@@ -90,14 +101,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         searchPreferences.edit().remove("queries").apply()
     }
 
-    fun search(query: String) {
+    fun search(query: String) = searchController.search(query)
+
+    fun rememberSearch(query: String) {
         val term = query.trim()
         if (term.isNotEmpty()) {
             val history = (listOf(term) + recentSearches.value.filterNot { it.equals(term, ignoreCase = true) }).take(20)
             recentSearches.value = history
             searchPreferences.edit().putString("queries", org.json.JSONArray(history).toString()).apply()
         }
-        searchController.search(term)
     }
 
     fun play(track: Track) = playPlaylist(listOf(track))
@@ -214,8 +226,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun clearHistory() { localLibrary.clearHistory() }
     fun dismissLibraryError() = localLibrary.dismissError()
 
-    fun downloadAlbum(album: DownloadedAlbum, tracks: List<Track>) = offlineDownloads.downloadAlbum(album, tracks)
-    fun download(tracks: List<Track>) = offlineDownloads.download(tracks)
+    fun downloadAlbum(album: DownloadedCollection, tracks: List<Track>) = offlineDownloads.downloadAlbum(album, tracks)
+
+    fun downloadPlaylist(playlist: DownloadedCollection, tracks: List<Track>) = offlineDownloads.downloadPlaylist(playlist, tracks)
     fun download(track: Track) = offlineDownloads.download(track)
     fun setWifiOnly(enabled: Boolean) = offlineDownloads.setWifiOnly(enabled)
     fun removeDownload(id: String) {

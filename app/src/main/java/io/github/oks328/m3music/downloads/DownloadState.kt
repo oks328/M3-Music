@@ -11,7 +11,7 @@ data class DownloadEntry(
     val bytes: Long = 0,
 )
 
-data class DownloadedAlbum(
+data class DownloadedCollection(
     val id: String,
     val title: String,
     val artist: String?,
@@ -25,7 +25,8 @@ data class DownloadsState(
     val waitingForNetwork: Boolean = false,
     val loading: Boolean = true,
     val error: String? = null,
-    val albums: List<DownloadedAlbum> = emptyList(),
+    val albums: List<DownloadedCollection> = emptyList(),
+    val playlists: List<DownloadedCollection> = emptyList(),
 )
 
 internal val DownloadEntry.active: Boolean

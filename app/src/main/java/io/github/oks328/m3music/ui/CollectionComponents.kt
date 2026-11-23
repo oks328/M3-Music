@@ -58,18 +58,12 @@ internal fun CollectionHeader(
                 }
             }
         }
-        Artwork(item.artworkUrl, Modifier.widthIn(max = 240.dp).fillMaxWidth().aspectRatio(1f).align(Alignment.CenterHorizontally), large = true)
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(item.title, style = MaterialTheme.typography.headlineLarge)
-            if (item.subtitle.isNotBlank()) Text(item.subtitle, style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (songs.isNotEmpty()) {
-                val seconds = songs.sumOf { it.durationSeconds.toLong() }
-                val duration = if (seconds > 0 && songs.all { it.durationSeconds > 0 }) " Â· ${seconds / 60} min" else ""
-                Text("${songs.size} ${if (songs.size == 1) "song" else "songs"}${if (hasMore) " loaded" else ""}$duration",
-                    style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+        val metadata = songs.takeIf { it.isNotEmpty() }?.let {
+            val seconds = it.sumOf { song -> song.durationSeconds.toLong() }
+            val duration = if (seconds > 0 && it.all { song -> song.durationSeconds > 0 }) " · ${seconds / 60} min" else ""
+            "${it.size} ${if (it.size == 1) "song" else "songs"}${if (hasMore) " loaded" else ""}$duration"
         }
+        LibraryCollectionTitle(item.title, item.artworkUrl, item.subtitle, metadata)
         CollectionPlaybackButtons(songs, hasMore, connected, onPlay, downloadAction)
         if (hasMore) Text("Play and Shuffle use the songs loaded below. Load more to include the rest.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -124,13 +118,15 @@ internal fun CollectionPlaybackButtons(
 @Composable
 internal fun CollectionDownloadButton(
     kind: String, songs: List<Track>, hasMore: Boolean, downloads: DownloadsState,
-    busy: Boolean, albumId: String? = null, onClick: () -> Unit,
+    busy: Boolean, collectionId: String? = null, onClick: () -> Unit,
 ) {
-    val album = downloads.albums.firstOrNull { it.id == albumId }
+    val groups = if (kind == "album") downloads.albums else downloads.playlists
+    val collection = groups.firstOrNull { it.id == collectionId }
     val entries = downloads.items.associateBy { it.track.id }
-    val ids = album?.trackIds ?: songs.map { it.id }.distinct()
-    val completeSet = album != null || !hasMore
-    val registered = albumId == null || album != null
+    val visibleIds = songs.map { it.id }.distinct()
+    val ids = if (hasMore) collection?.trackIds ?: visibleIds else visibleIds
+    val completeSet = collection != null || !hasMore
+    val registered = collectionId == null || collection?.trackIds == ids
     val active = registered && completeSet && ids.any { entries[it]?.active == true }
     val saved = registered && completeSet && ids.isNotEmpty() &&
         ids.all { entries[it]?.status == DownloadStatus.COMPLETED }

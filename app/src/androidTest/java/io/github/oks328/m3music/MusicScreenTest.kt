@@ -125,7 +125,10 @@ class MusicScreenTest {
         }
         compose.onNodeWithText("Library").performClick()
         compose.onNodeWithText("Downloads").performClick()
-        compose.onNodeWithContentDescription("Download on Wi-Fi only").performClick()
+        compose.onNodeWithText("Download on Wi-Fi only").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Account").performClick()
+        compose.onNodeWithText("Settings").performClick()
+        compose.onNodeWithText("Download on Wi-Fi only").performClick()
         compose.runOnIdle { assertEquals(false, setting) }
     }
 
@@ -141,6 +144,31 @@ class MusicScreenTest {
         compose.onNodeWithText("Songs, albums, or artists").performTextInput("Daft Punk")
         compose.onNodeWithContentDescription("Submit search").performClick()
         compose.runOnIdle { assertEquals("Daft Punk", submitted) }
+    }
+
+    @Test fun typingShowsResultsWithoutSubmitting() {
+        val track = Track("abcdefghijk", "Instant result", "Artist", null, 180)
+        val state = androidx.compose.runtime.mutableStateOf(SearchState())
+        compose.setContent { M3MusicTheme {
+            MusicScreen(state.value, PlaybackState(connected = true), { term ->
+                state.value = SearchState(query = term, tracks = listOf(track), hasSearched = true)
+            }, {}, {}, {}, {})
+        } }
+        compose.onNodeWithText("Search").performClick()
+        compose.onNodeWithText("Songs, albums, or artists").performTextInput("Instant")
+        compose.waitUntil(5_000) { state.value.query == "Instant" }
+        compose.onNodeWithContentDescription("Play Instant result by Artist").assertIsDisplayed()
+    }
+
+    @Test fun offlineSearchOpensDownloads() {
+        compose.setContent { M3MusicTheme {
+            MusicScreen(SearchState(query = "Artist", hasSearched = true, offline = true),
+                PlaybackState(connected = true), {}, {}, {}, {}, {})
+        } }
+        compose.onNodeWithText("Search").performClick()
+        compose.onNodeWithText("Looks like you're offline").assertIsDisplayed()
+        compose.onNodeWithText("Go to Downloads").performClick()
+        compose.onNodeWithText("Downloaded Songs").assertIsDisplayed()
     }
 
     @Test fun userCanSelectSearchResult() {
@@ -247,11 +275,36 @@ class MusicScreenTest {
         androidx.test.espresso.Espresso.pressBack()
         compose.onNodeWithContentDescription("Song position").assertIsDisplayed()
     }
+    @Test fun downloadedPlaylistOpensItsOwnOrderedOfflineQueue() {
+        val first = Track("abcdefghijk", "First playlist song", "Artist", null, 180)
+        val second = Track("lmnopqrstuv", "Second playlist song", "Artist", null, 180)
+        val standalone = Track("zyxwvutsrqp", "Standalone song", "Artist", null, 180)
+        val playlist = io.github.oks328.m3music.downloads.DownloadedCollection(
+            "VLtest", "Saved playlist", null, null, listOf(first.id, second.id))
+        var queue = emptyList<Track>()
+        compose.setContent { M3MusicTheme {
+            MusicScreen(SearchState(), PlaybackState(connected = true), {}, {}, {}, {}, {},
+                downloads = DownloadsState(
+                    items = listOf(second, standalone, first).map { DownloadEntry(it, DownloadStatus.COMPLETED) },
+                    playlists = listOf(playlist), loading = false),
+                onPlayPlaylist = { songs, _ -> queue = songs })
+        } }
+        compose.onNodeWithText("Library").performClick()
+        compose.onNodeWithText("Downloads").performClick()
+        compose.onNodeWithText("Playlists").assertIsDisplayed()
+        compose.onNodeWithText("Saved playlist").performClick()
+        compose.onNodeWithText("Standalone song").assertDoesNotExist()
+        compose.onNodeWithText("Play", useUnmergedTree = true).performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(listOf(first, second), queue) }
+        androidx.test.espresso.Espresso.pressBack()
+        compose.onNodeWithText("Downloaded Songs").assertIsDisplayed()
+    }
+
     @Test fun downloadedAlbumOpensItsOwnOfflineQueue() {
         val first = Track("abcdefghijk", "First album song", "Artist", null, 180)
         val second = Track("lmnopqrstuv", "Second album song", "Artist", null, 180)
         val standalone = Track("zyxwvutsrqp", "Standalone song", "Artist", null, 180)
-        val album = io.github.oks328.m3music.downloads.DownloadedAlbum(
+        val album = io.github.oks328.m3music.downloads.DownloadedCollection(
             "MPREtest", "Saved album", "Artist", null, listOf(first.id, second.id)
         )
         var queue = emptyList<Track>()

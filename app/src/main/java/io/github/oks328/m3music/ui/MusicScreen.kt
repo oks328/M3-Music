@@ -40,7 +40,7 @@ import coil.request.CachePolicy
 import androidx.compose.ui.platform.LocalContext
 import io.github.oks328.m3music.downloads.DownloadsState
 import io.github.oks328.m3music.downloads.DownloadEntry
-import io.github.oks328.m3music.downloads.DownloadedAlbum
+import io.github.oks328.m3music.downloads.DownloadedCollection
 import io.github.oks328.m3music.downloads.DownloadStatus
 import io.github.oks328.m3music.R
 import io.github.oks328.m3music.music.SearchState
@@ -50,6 +50,7 @@ import io.github.oks328.m3music.library.LibraryState
 import io.github.oks328.m3music.library.LocalPlaylist
 import io.github.oks328.m3music.account.*
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -88,13 +89,14 @@ fun MusicScreen(
     onRepeat: () -> Unit = {},
     searchHistory: List<String> = emptyList(),
     onClearSearchHistory: () -> Unit = {},
+    onRememberSearch: (String) -> Unit = {},
     loadDiscovery: suspend () -> List<DiscoveryShelf> = { emptyList() },
     loadDiscoveryCollection: suspend (String) -> AccountPage = { AccountPage() },
     findArtist: (suspend (String) -> AccountItem?)? = null,
     findTrackArtists: (suspend (Track) -> List<AccountItem>)? = null,
     findSongCollection: (suspend (Track, AccountItemKind) -> AccountItem?)? = null,
-    onDownloadTracks: (List<Track>) -> Unit = { tracks -> tracks.forEach(onDownload) },
-    onDownloadAlbum: (DownloadedAlbum, List<Track>) -> Unit = { _, tracks -> onDownloadTracks(tracks) },
+    onDownloadAlbum: (DownloadedCollection, List<Track>) -> Unit = { _, tracks -> tracks.forEach(onDownload) },
+    onDownloadPlaylist: (DownloadedCollection, List<Track>) -> Unit = { _, tracks -> tracks.forEach(onDownload) },
     loadCollectionTracks: suspend (String, AccountPage, Boolean) -> List<Track> = { _, page, _ ->
         page.items.mapNotNull { it.track }
     },
@@ -183,11 +185,11 @@ fun MusicScreen(
                     val tracks = loadCollectionTracks(item.id, page, fromLibrary)
                     if (tracks.isEmpty()) "No downloadable songs in this collection."
                     else {
-                        if (item.kind == AccountItemKind.ALBUM) {
-                            onDownloadAlbum(DownloadedAlbum(item.id, item.title, page.albumArtist ?: item.albumArtist,
-                                page.artworkUrl ?: item.artworkUrl ?: tracks.first().artworkUrl,
-                                tracks.map { it.id }.distinct()), tracks)
-                        } else onDownloadTracks(tracks)
+                        val collection = DownloadedCollection(item.id, item.title, page.albumArtist ?: item.albumArtist,
+                            page.artworkUrl ?: item.artworkUrl ?: tracks.first().artworkUrl,
+                            tracks.map { it.id }.distinct())
+                        if (item.kind == AccountItemKind.ALBUM) onDownloadAlbum(collection, tracks)
+                        else onDownloadPlaylist(collection, tracks)
                         "Download requested. Check Library > Downloads for progress."
                     }
                 } catch (cancelled: CancellationException) {
@@ -204,7 +206,7 @@ fun MusicScreen(
     val collectionDownloadButton: @Composable (AccountItem, AccountPage, Boolean) -> Unit = { item, page, fromLibrary ->
         val kind = if (item.kind == AccountItemKind.ALBUM) "album" else "playlist"
         CollectionDownloadButton(kind, page.items.mapNotNull { it.track }, page.continuation != null, downloads,
-            preparingCollection != null, albumId = item.id.takeIf { item.kind == AccountItemKind.ALBUM }) {
+            preparingCollection != null, collectionId = item.id) {
             downloadCollection(item, page, fromLibrary)
         }
     }
@@ -212,11 +214,25 @@ fun MusicScreen(
         library.error?.let { snackbar.showSnackbar(it); onDismissLibraryError() }
     }
     val keyboard = LocalSoftwareKeyboardController.current
-    val submit = {
-        keyboard?.hide()
+    val searchTerm = query.trim()
+    var requestedTerm by remember { mutableStateOf(search.query) }
+    val currentOnSearch by rememberUpdatedState(onSearch)
+    fun requestSearch(term: String) {
+        requestedTerm = term
         searchFilter = "All"
         scope.launch { searchResultsScroll.scrollToItem(0) }
-        onSearch(query)
+        currentOnSearch(term)
+    }
+    LaunchedEffect(destination, searchTerm) {
+        if (destination == "Search" && searchTerm != requestedTerm) {
+            if (searchTerm.isNotEmpty()) delay(350)
+            if (searchTerm != requestedTerm) requestSearch(searchTerm)
+        }
+    }
+    val submit: (String) -> Unit = { term ->
+        keyboard?.hide()
+        onRememberSearch(term)
+        if (term != requestedTerm || search.error != null || search.offline) requestSearch(term)
     }
     Box(Modifier.fillMaxSize()) {
     Scaffold(modifier = Modifier.fillMaxSize(),
@@ -252,11 +268,7 @@ fun MusicScreen(
             .padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(if (showAccountLibrary && account.collection != null) when (account.collection.kind) {
-                    io.github.oks328.m3music.account.AccountItemKind.ALBUM -> "Album"
-                    io.github.oks328.m3music.account.AccountItemKind.ARTIST -> "Artist"
-                    else -> "Playlist"
-                } else if (showHome) stringResource(R.string.app_name) else destination,
+                Text(if (showHome) stringResource(R.string.app_name) else destination,
                     style = if (showHome) LocalMusicTypeStyles.current.brandTitle else MaterialTheme.typography.titleLarge)
             }
                 if (showAccountLibrary && openedCatalog == null && account.collection == null &&
@@ -270,7 +282,7 @@ fun MusicScreen(
                     Icon(painterResource(R.drawable.ic_account), "Account")
                 }
             }
-            if (openedCatalog == null && showLibrary && (!showAccountLibrary || account.collection == null)) {
+            if (openedCatalog == null && showLibrary) {
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf("YouTube Music", "Downloads", "On device").forEach { section ->
                         FilterChip(selected = librarySection == section, onClick = { librarySection = section },
@@ -278,14 +290,7 @@ fun MusicScreen(
                     }
                 }
             }
-            if (showDownloads && openedCatalog == null) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Download on Wi-Fi only", modifier = Modifier.weight(1f))
-                    Switch(checked = downloads.wifiOnly, onCheckedChange = onWifiOnlyChanged,
-                        modifier = Modifier.semantics { contentDescription = "Download on Wi-Fi only" })
-                }
-            } else if (!showHome && !showLibrary && searchCollection == null && openedCatalog == null) OutlinedTextField(
+            if (!showHome && !showLibrary && searchCollection == null && openedCatalog == null) OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
                 modifier = Modifier.fillMaxWidth(),
@@ -293,20 +298,20 @@ fun MusicScreen(
                 singleLine = true,
                 shape = RoundedCornerShape(24.dp),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { submit() }),
+                keyboardActions = KeyboardActions(onSearch = { submit(searchTerm) }),
                 trailingIcon = {
                     Row {
-                        if (query.isNotEmpty()) IconButton(onClick = { query = ""; onSearch("") }) {
+                        if (query.isNotEmpty()) IconButton(onClick = { query = ""; requestSearch("") }) {
                             Icon(painterResource(R.drawable.ic_clear), "Clear search text")
                         }
-                        IconButton(onClick = { submit() }, enabled = query.isNotBlank()) {
+                        IconButton(onClick = { submit(searchTerm) }, enabled = searchTerm.isNotEmpty()) {
                             Icon(painterResource(R.drawable.ic_search), "Submit search")
                         }
                     }
                 },
             )
             if (openedCatalog == null && destination == "Search" && searchCollection == null && query.isNotBlank() &&
-                search.hasSearched && search.error == null
+                search.query == searchTerm && search.hasSearched && search.error == null && !search.offline
             ) {
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf("All", "Songs", "Albums", "Artists").forEach { filter ->
@@ -346,7 +351,7 @@ fun MusicScreen(
                     onAdd = { addTrack = it }, onCreate = { createWithTrack = null; creating = true },
                     onRename = { renaming = it }, onDelete = { deleting = it },
                     onRemoveSong = onRemovePlaylistSong, onMoveSong = onMovePlaylistSong,
-                    onClearHistory = onClearHistory, onDownloadTracks = onDownloadTracks, bottomClearance = insets.calculateBottomPadding(), modifier = Modifier.weight(1f).fillMaxWidth())
+                    onClearHistory = onClearHistory, onDownloadPlaylist = onDownloadPlaylist, bottomClearance = insets.calculateBottomPadding(), modifier = Modifier.weight(1f).fillMaxWidth())
             } else if (!showLibrary && searchCollection != null) {
                 CatalogCollectionPanel(searchCollection, loadDiscoveryCollection, playback, onPlayPlaylist,
                     insets.calculateBottomPadding(),
@@ -362,7 +367,7 @@ fun MusicScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(bottom = 16.dp + insets.calculateBottomPadding())) {
                 when {
-                    query.isBlank() || !search.hasSearched && !search.loading -> {
+                    searchTerm.isEmpty() -> {
                         if (searchHistory.isNotEmpty()) {
                             item {
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
@@ -374,7 +379,7 @@ fun MusicScreen(
                             items(searchHistory, key = { it }) { term ->
                                 Surface(onClick = {
                                     query = term
-                                    submit()
+                                    submit(term)
                                 }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
                                     color = MaterialTheme.colorScheme.surfaceContainerLow) {
                                     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically,
@@ -389,15 +394,28 @@ fun MusicScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
-                    search.loading -> item {
+                    search.query != searchTerm || search.loading -> item {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             LoadingIndicator()
                             Text("Searching YouTube Music…", style = MaterialTheme.typography.bodyMedium)
                         }
                     }
+                    search.offline -> item {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Looks like you're offline", style = MaterialTheme.typography.titleLarge)
+                            Text("You can still play music you've saved in Downloads.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            FilledTonalButton(onClick = {
+                                keyboard?.hide()
+                                openedCatalog = null
+                                librarySection = "Downloads"
+                                destination = "Library"
+                            }) { Text("Go to Downloads") }
+                        }
+                    }
                     search.error != null -> item {
                         Text(search.error, color = MaterialTheme.colorScheme.error)
-                        TextButton(onClick = { onSearch(search.query) }) { Text("Try again") }
+                        TextButton(onClick = { requestSearch(searchTerm) }) { Text("Try again") }
                     }
                     else -> {
                         val songs = if (searchFilter in listOf("All", "Songs")) search.tracks else emptyList()
@@ -406,7 +424,7 @@ fun MusicScreen(
                             .map { (label, kind) -> label to search.collections.filter { it.kind == kind } }
                         search.partialError?.let { message -> item {
                             Text(message, color = MaterialTheme.colorScheme.error)
-                            TextButton(onClick = { onSearch(search.query) }) { Text("Try again") }
+                            TextButton(onClick = { requestSearch(searchTerm) }) { Text("Try again") }
                         } }
                         if (songs.isEmpty() && groups.all { it.second.isEmpty() } && search.partialError == null) {
                             item { Text("No results found. Try a different search.") }
@@ -423,7 +441,11 @@ fun MusicScreen(
                                 }
                             }
                             items(if (searchFilter == "All") results.take(3) else results, key = { "${it.kind}:${it.id}" }) { item ->
-                                CatalogResultRow(item) { searchCollectionId = item.id }
+                                CatalogResultRow(item) {
+                                    onRememberSearch(searchTerm)
+                                    keyboard?.hide()
+                                    searchCollectionId = item.id
+                                }
                             }
                         }
                         if (songs.isNotEmpty() && searchFilter == "All") {
@@ -432,7 +454,10 @@ fun MusicScreen(
                         items(songs, key = { it.id }) { track ->
                             val entry = downloads.items.firstOrNull { it.track.id == track.id }
                             SearchSongResult(track, playback, entry, lookingUpSongCollection,
-                                onPlay = { onPlay(track) },
+                                onPlay = {
+                                    onRememberSearch(searchTerm)
+                                    onPlay(track)
+                                },
                                 onEnqueue = {
                                     onEnqueue(track)
                                     scope.launch { snackbar.showSnackbar("Added to queue") }
@@ -461,7 +486,7 @@ fun MusicScreen(
         }
     }
     }
-    if (showAccount) AccountSettingsDialog(account, accountActions, { showAccount = false })
+    if (showAccount) AccountSettingsDialog(account, accountActions, downloads.wifiOnly, onWifiOnlyChanged) { showAccount = false }
     val currentTrack = playback.track
     if (currentTrack != null) {
         BackHandler(expandedPlayer) { settlePlayer(false, 0f) }

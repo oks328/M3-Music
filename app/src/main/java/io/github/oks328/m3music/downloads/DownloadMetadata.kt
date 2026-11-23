@@ -5,19 +5,19 @@ import org.json.JSONObject
 import org.json.JSONArray
 
 internal object DownloadMetadata {
-    fun encodeAlbums(albums: List<DownloadedAlbum>): String = JSONArray(albums.map { album ->
-        JSONObject().put("id", album.id).put("title", album.title).put("artist", album.artist)
-            .put("artwork", album.artworkUrl).put("songs", JSONArray(album.trackIds))
+    fun encodeCollections(collections: List<DownloadedCollection>): String = JSONArray(collections.map { collection ->
+        JSONObject().put("id", collection.id).put("title", collection.title).put("artist", collection.artist)
+            .put("artwork", collection.artworkUrl).put("songs", JSONArray(collection.trackIds))
     }).toString()
 
-    fun decodeAlbums(raw: String?): List<DownloadedAlbum> {
+    fun decodeCollections(raw: String?): List<DownloadedCollection> {
         val json = runCatching { JSONArray(raw ?: "[]") }.getOrNull() ?: return emptyList()
         return (0 until json.length()).mapNotNull { index ->
             runCatching {
-                val album = json.getJSONObject(index)
-                val songs = album.getJSONArray("songs")
-                DownloadedAlbum(album.getString("id"), album.getString("title"),
-                    album.optString("artist").ifBlank { null }, album.optString("artwork").ifBlank { null },
+                val collection = json.getJSONObject(index)
+                val songs = collection.getJSONArray("songs")
+                DownloadedCollection(collection.getString("id"), collection.getString("title"),
+                    collection.optString("artist").ifBlank { null }, collection.optString("artwork").ifBlank { null },
                     List(songs.length()) { songs.getString(it) })
             }.getOrNull()
         }
