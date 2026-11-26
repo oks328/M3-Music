@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -73,8 +74,11 @@ internal fun DownloadsPanel(
             }
         }
     }
+    val overviewScroll = rememberLazyListState()
+    val panelModifier = modifier.collectionMotion(selected)
     key(selected) {
-        LazyColumn(modifier, verticalArrangement = Arrangement.spacedBy(4.dp),
+        val detailScroll = rememberLazyListState()
+        LazyColumn(panelModifier, state = if (selected == null) overviewScroll else detailScroll, verticalArrangement = Arrangement.spacedBy(4.dp),
             contentPadding = PaddingValues(bottom = bottomClearance + 16.dp)) {
             downloads.error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
             if (downloads.loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }

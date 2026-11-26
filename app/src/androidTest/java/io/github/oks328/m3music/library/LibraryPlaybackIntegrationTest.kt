@@ -85,6 +85,24 @@ class LibraryPlaybackIntegrationTest {
                     it.status == DownloadStatus.COMPLETED && it.track.id != song.id
                 }?.track
                 if (extra != null) {
+                    activity.onActivity { model.playQueueItem(0) }
+                    withTimeout(10_000) { model.playback.first { it.queueIndex == 0 } }
+                    activity.onActivity { model.enqueueTracks(listOf(extra), playNext = true) }
+                    val inserted = withTimeout(10_000) { model.playback.first { it.queue.size == 3 } }
+                    assertEquals(listOf(song.id, extra.id, song.id), inserted.queue.map { it.id })
+                    activity.onActivity {
+                        controller.removeMediaItem(1)
+                        model.toggleShuffle()
+                    }
+                    withTimeout(10_000) { model.playback.first { it.shuffle && it.queue.size == 2 } }
+                    activity.onActivity { model.enqueueTracks(listOf(extra), playNext = true) }
+                    withTimeout(10_000) { model.playback.first { it.queue.size == 3 } }
+                    activity.onActivity {
+                        assertEquals(extra.id, controller.getMediaItemAt(controller.nextMediaItemIndex).mediaId)
+                        model.toggleShuffle()
+                        controller.removeMediaItem(2)
+                    }
+                    withTimeout(10_000) { model.playback.first { !it.shuffle && it.queue.size == 2 } }
                     activity.onActivity { model.enqueue(extra) }
                     withTimeout(10_000) { model.playback.first { it.queue.size == 3 } }
                     activity.onActivity { model.moveQueueItem(2, 0) }

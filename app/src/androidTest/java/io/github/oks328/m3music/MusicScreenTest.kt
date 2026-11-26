@@ -55,6 +55,101 @@ class MusicScreenTest {
         compose.onNodeWithContentDescription("Open now playing").assertIsDisplayed()
     }
 
+    @Test fun savingQueueUsesOnlyExplicitlyQueuedTracks() {
+        val song = Track("abcdefghijk", "Queued song", "Artist", null, 180)
+        val suggestion = Track("lmnopqrstuv", "Suggested song", "Artist", null, 180)
+        var action: io.github.oks328.m3music.account.AccountAction? = null
+        compose.setContent { M3MusicTheme {
+            MusicScreen(SearchState(), PlaybackState(connected = true, track = song, queue = listOf(song),
+                queueSize = 1, autoplay = true, autoplayTracks = listOf(suggestion)), {}, {}, {}, {}, {},
+                account = io.github.oks328.m3music.account.AccountState(
+                    profile = io.github.oks328.m3music.account.AccountProfile("Listener")),
+                accountActions = io.github.oks328.m3music.ui.AccountActions(perform = { action = it }))
+        } }
+        compose.onNodeWithContentDescription("Open now playing").performClick()
+        compose.onNodeWithText("Queue").performClick()
+        compose.onNodeWithContentDescription("Save queue as playlist").performClick()
+        compose.onNodeWithText("Playlist name").performTextInput("Road trip")
+        compose.onNodeWithText("Create").performClick()
+        compose.runOnIdle {
+            assertEquals(io.github.oks328.m3music.account.AccountAction.CreatePlaylist("Road trip", listOf(song.id)), action)
+        }
+    }
+
+    @Test fun queueOpensNearTheCurrentSongAndUsesItsOwnControls() {
+        val songs = List(24) { Track("track-$it", "Song $it", "Artist", null, 180) }
+        compose.setContent { M3MusicTheme {
+            MusicScreen(SearchState(), PlaybackState(connected = true, track = songs[18],
+                queue = songs, queueIndex = 18, queueSize = songs.size, durationMs = 180000),
+                {}, {}, {}, {}, {})
+        } }
+        compose.onNodeWithContentDescription("Open now playing").performClick()
+        compose.onNodeWithContentDescription("Add to playlist").assertIsDisplayed()
+        compose.onNodeWithText("Queue").performClick()
+        compose.onNodeWithContentDescription("Reorder Song 18").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Add to playlist").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Back to player").performClick()
+        compose.onNodeWithContentDescription("Song position").assertIsDisplayed()
+    }
+
+    @Test fun pullingDownAtTheStartOfQueueReturnsToPlayer() {
+        val song = Track("abcdefghijk", "Queue test song", "Artist", null, 180)
+        compose.setContent { M3MusicTheme {
+            MusicScreen(SearchState(), PlaybackState(connected = true, track = song,
+                queue = listOf(song), queueSize = 1, durationMs = 180000), {}, {}, {}, {}, {})
+        } }
+        compose.onNodeWithContentDescription("Open now playing").performClick()
+        compose.onNodeWithText("Queue").performClick()
+        compose.onNodeWithContentDescription("Play Queue test song by Artist").performTouchInput {
+            swipe(start = center, end = center.copy(y = center.y + 320f))
+        }
+        compose.onNodeWithContentDescription("Song position").assertIsDisplayed()
+    }
+
+    @Test fun queueRemovalOffersUndo() {
+        val first = Track("abcdefghijk", "Current song", "Artist", null, 180)
+        val second = Track("lmnopqrstuv", "Queued song", "Artist", null, 180)
+        val songs = androidx.compose.runtime.mutableStateOf(listOf(first, second))
+        compose.setContent { M3MusicTheme {
+            MusicScreen(SearchState(), PlaybackState(connected = true, track = first,
+                queue = songs.value, queueSize = songs.value.size), {}, {}, {}, {}, {},
+                onRemoveQueueItem = { index ->
+                    assertEquals(1, index)
+                    songs.value = listOf(first)
+                    val undo: () -> Unit = { songs.value = listOf(first, second) }
+                    undo
+                })
+        } }
+        compose.onNodeWithContentDescription("Open now playing").performClick()
+        compose.onNodeWithText("Queue").performClick()
+        compose.onNodeWithContentDescription("Reorder Queued song").performClick()
+        compose.onNodeWithText("Remove from queue").performClick()
+        compose.onNodeWithContentDescription("Reorder Queued song").assertDoesNotExist()
+        compose.onNodeWithText("Undo").performClick()
+        compose.onNodeWithContentDescription("Reorder Queued song").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Play Queued song by Artist").performTouchInput { swipeLeft() }
+        compose.onNodeWithContentDescription("Reorder Queued song").assertDoesNotExist()
+    }
+
+    @Test fun queueAutoplayCanBeEnabledWhileRepeatTakesPrecedence() {
+        val track = Track("abcdefghijk", "A song", "An artist", null, 180)
+        val suggestion = Track("lmnopqrstuv", "Suggested song", "An artist", null, 180)
+        val autoplay = androidx.compose.runtime.mutableStateOf(false)
+        compose.setContent { M3MusicTheme {
+            MusicScreen(SearchState(), PlaybackState(connected = true, track = track, queue = listOf(track),
+                queueSize = 1, autoplay = autoplay.value, autoplayTracks = listOf(suggestion), repeat = io.github.oks328.m3music.playback.RepeatMode.ALL),
+                {}, {}, {}, {}, {}, onAutoplay = { autoplay.value = !autoplay.value })
+        } }
+        compose.onNodeWithContentDescription("Open now playing").performClick()
+        compose.onNodeWithText("Queue").performClick()
+        compose.onNodeWithText("Starts when Repeat is off").assertIsDisplayed()
+        compose.onNodeWithText("Suggested song").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Autoplay").assertIsOff().performClick()
+        compose.onNodeWithContentDescription("Autoplay").assertIsOn()
+        compose.onNodeWithText("Suggested song").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Reorder Suggested song").assertDoesNotExist()
+    }
+
     @Test fun expandedQueueSelectsTheRequestedEntry() {
         val first = Track("abcdefghijk", "First queued song", "Artist", null, 180)
         val second = Track("lmnopqrstuv", "Second queued song", "Artist", null, 120)
@@ -132,6 +227,54 @@ class MusicScreenTest {
         compose.runOnIdle { assertEquals(false, setting) }
     }
 
+    @Test fun reselectingSearchFocusesTheField() {
+        compose.setContent { M3MusicTheme {
+            MusicScreen(SearchState(), PlaybackState(connected = true), {}, {}, {}, {}, {})
+        } }
+        val searchTab = compose.onNode(hasText("Search") and hasClickAction())
+        searchTab.performClick()
+        val field = compose.onNodeWithText("Songs, albums, or artists")
+        field.assertIsNotFocused()
+        searchTab.performClick()
+        field.assertIsFocused()
+    }
+
+    @Test fun nextAndPreviousButtonsSettleOnTheSelectedSong() {
+        val songs = listOf(Track("abcdefghijk", "First track", "Artist", null, 180),
+            Track("lmnopqrstuv", "Second track", "Artist", null, 180))
+        val index = androidx.compose.runtime.mutableIntStateOf(0)
+        compose.setContent { M3MusicTheme {
+            MusicScreen(SearchState(), PlaybackState(connected = true, track = songs[index.intValue],
+                queue = songs, queueIndex = index.intValue, queueSize = songs.size,
+                canNext = index.intValue == 0, canPrevious = index.intValue == 1), {}, {}, {}, {}, {},
+                onNext = { index.intValue++ }, onPrevious = { index.intValue-- })
+        } }
+        compose.onNodeWithContentDescription("Open now playing").performClick()
+        compose.onNodeWithContentDescription("Next", substring = false).performClick()
+        compose.onNodeWithText("Second track").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Previous", substring = false).performClick()
+        compose.onNodeWithText("First track").assertIsDisplayed()
+    }
+
+    @Test fun horizontalSwipesSkipOnBothPlayers() {
+        val track = Track("abcdefghijk", "Swipe test track", "Artist", null, 180)
+        var next = 0
+        var previous = 0
+        compose.setContent { M3MusicTheme {
+            MusicScreen(SearchState(), PlaybackState(connected = true, track = track,
+                canNext = true, canPrevious = true), {}, {}, {}, {}, {},
+                onNext = { next++ }, onPrevious = { previous++ })
+        } }
+        val mini = compose.onNodeWithContentDescription("Open now playing")
+        mini.performTouchInput { swipe(start = center.copy(x = center.x + 85f), end = center.copy(x = center.x - 85f)) }
+        compose.runOnIdle { assertEquals(1, next) }
+        mini.performClick()
+        compose.onNodeWithText("Swipe test track").performTouchInput {
+            swipe(start = center, end = center.copy(x = center.x + 210f))
+        }
+        compose.runOnIdle { assertEquals(1, previous) }
+    }
+
     @Test fun userCanSubmitSongSearch() {
         var submitted = ""
         compose.setContent {
@@ -158,6 +301,38 @@ class MusicScreenTest {
         compose.onNodeWithText("Songs, albums, or artists").performTextInput("Instant")
         compose.waitUntil(5_000) { state.value.query == "Instant" }
         compose.onNodeWithContentDescription("Play Instant result by Artist").assertIsDisplayed()
+    }
+
+    @Test fun homeRetriesDiscoveryWhenValidatedNetworkChanges() {
+        val network = androidx.compose.runtime.mutableStateOf(1L)
+        var loads = 0
+        compose.setContent { M3MusicTheme {
+            MusicScreen(SearchState(), PlaybackState(connected = true), {}, {}, {}, {}, {},
+                account = io.github.oks328.m3music.account.AccountState(initializing = false),
+                homeNetworkKey = network.value,
+                loadDiscovery = {
+                    if (++loads == 1) throw java.io.IOException()
+                    emptyList()
+                })
+        } }
+        compose.onNodeWithText("Couldn't load recommendations from YouTube Music.").assertIsDisplayed()
+        compose.runOnIdle { network.value = 2L }
+        compose.onNodeWithText("YouTube Music returned no recommendations.").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(2, loads) }
+    }
+
+    @Test fun downloadsQueueExplainsWhyAutoplayIsUnavailable() {
+        val song = Track("abcdefghijk", "Downloaded song", "Artist", null, 180)
+        compose.setContent { M3MusicTheme {
+            MusicScreen(SearchState(), PlaybackState(connected = true, track = song,
+                queue = listOf(song), queueSize = 1, downloadQueue = true, autoplay = true),
+                {}, {}, {}, {}, {})
+        } }
+        compose.onNodeWithContentDescription("Open now playing").performClick()
+        compose.onNodeWithText("Queue").performClick()
+        compose.onNodeWithText("Unavailable for Downloads queues").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Autoplay").assertIsNotEnabled()
+        compose.onNodeWithText("Autoplay next").assertDoesNotExist()
     }
 
     @Test fun offlineHomeOpensDownloads() {

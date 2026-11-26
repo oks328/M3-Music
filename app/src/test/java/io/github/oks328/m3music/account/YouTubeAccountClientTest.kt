@@ -66,11 +66,13 @@ class YouTubeAccountClientTest {
     @Test fun newAccountPlaylistsArePrivate() {
         MockWebServer().use { server ->
             server.enqueue(MockResponse().setBody("""{"playlistId":"PLcreated"}"""))
-            runBlocking { YouTubeAccountClient(server.url("/")).perform(session, AccountAction.CreatePlaylist("Road trip")) }
+            runBlocking { YouTubeAccountClient(server.url("/")).perform(session, AccountAction.CreatePlaylist("Road trip", listOf("abcdefghijk", "lmnopqrstuv"))) }
             val sent = requireNotNull(server.takeRequest(1, TimeUnit.SECONDS))
             val body = JSONObject(sent.body.readUtf8())
             assertEquals("PRIVATE", body.getString("privacyStatus"))
             assertEquals("Road trip", body.getString("title"))
+            assertEquals("abcdefghijk", body.getJSONArray("videoIds").getString(0))
+            assertEquals("lmnopqrstuv", body.getJSONArray("videoIds").getString(1))
             assertTrue(sent.path.orEmpty().startsWith("/playlist/create"))
         }
     }

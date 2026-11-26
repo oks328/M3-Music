@@ -43,6 +43,7 @@ internal fun AccountPanel(
     onPlaySongs: (List<Track>, Int) -> Unit,
     onDownload: (Track) -> Unit,
     collectionDownload: @Composable (AccountItem, AccountPage) -> Unit,
+    queueCollection: (AccountItem, AccountPage, Boolean) -> Unit = { _, _, _ -> },
     candidates: List<Track>,
     playingTrackId: String? = null,
     modifier: Modifier = Modifier,
@@ -76,20 +77,14 @@ internal fun AccountPanel(
             }
         }
     }
-    val listState = rememberLazyListState()
+    val browseScroll = key(state.category) { rememberLazyListState() }
+    val detailScroll = key(collection?.id) { rememberLazyListState() }
+    val listState = if (collection == null) browseScroll else detailScroll
     LaunchedEffect(playLikedWhenLoaded, state.category, state.page, state.loading, state.error) {
         if (playLikedWhenLoaded && state.category == AccountCategory.LIKED_SONGS && !state.loading) {
             val songs = state.page.items.mapNotNull { it.track }
             if (songs.isNotEmpty() && state.error == null && !state.expired && state.profile != null) onPlaySongs(songs, 0)
             playLikedWhenLoaded = false
-        }
-    }
-    val pageKey = collection?.id ?: state.category.name
-    var lastPageKey by rememberSaveable { mutableStateOf(pageKey) }
-    LaunchedEffect(pageKey) {
-        if (lastPageKey != pageKey) {
-            lastPageKey = pageKey
-            listState.scrollToItem(0)
         }
     }
     BackHandler(collection != null) { actions.back() }
@@ -101,7 +96,7 @@ internal fun AccountPanel(
             state.error, onAdd = addSong, onBack = { adding = false }, bottomClearance = bottomClearance, modifier = modifier)
         return
     }
-    LazyColumn(modifier.fillMaxWidth(), state = listState, verticalArrangement = Arrangement.spacedBy(if (collection == null) 4.dp else 12.dp),
+    LazyColumn(modifier.fillMaxWidth().collectionMotion(collection?.id), state = listState, verticalArrangement = Arrangement.spacedBy(if (collection == null) 4.dp else 12.dp),
         contentPadding = PaddingValues(bottom = 16.dp + bottomClearance)) {
         when {
             state.initializing -> item { LinearWavyProgressIndicator(Modifier.fillMaxWidth()) }
@@ -134,6 +129,10 @@ internal fun AccountPanel(
                             onDelete = { deleting = collection },
                             downloadAction = if (collection.kind in listOf(AccountItemKind.ALBUM, AccountItemKind.PLAYLIST)) {
                                 { collectionDownload(collection, page) }
+                            } else null,
+                            onQueue = if (playbackConnected && (page.items.any { it.track != null } || page.continuation != null) &&
+                                collection.kind in listOf(AccountItemKind.ALBUM, AccountItemKind.PLAYLIST)) {
+                                { next -> queueCollection(collection, page, next) }
                             } else null)
                     }
                     else when (state.category) {

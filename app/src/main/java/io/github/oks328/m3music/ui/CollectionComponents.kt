@@ -40,6 +40,7 @@ internal fun CollectionHeader(
     editable: Boolean, busy: Boolean, onBack: () -> Unit, onPlay: (List<Track>, Int) -> Unit,
     onRefresh: () -> Unit, onAdd: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit,
     downloadAction: (@Composable () -> Unit)? = null,
+    onQueue: ((Boolean) -> Unit)? = null,
 ) {
     var menu by remember(item.id) { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -49,6 +50,7 @@ internal fun CollectionHeader(
             Box {
                 IconButton(onClick = { menu = true }) { Icon(painterResource(R.drawable.ic_more), "Collection options") }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    if (onQueue != null) CollectionQueueActions { next -> menu = false; onQueue(next) }
                     DropdownMenuItem(text = { Text("Refresh collection") }, enabled = !busy, onClick = { menu = false; onRefresh() })
                     if (editable) {
                         DropdownMenuItem(text = { Text("Add a song") }, enabled = !busy, onClick = { menu = false; onAdd() })
@@ -60,7 +62,7 @@ internal fun CollectionHeader(
         }
         val metadata = songs.takeIf { it.isNotEmpty() }?.let {
             val seconds = it.sumOf { song -> song.durationSeconds.toLong() }
-            val duration = if (seconds > 0 && it.all { song -> song.durationSeconds > 0 }) " · ${seconds / 60} min" else ""
+            val duration = if (seconds > 0 && it.all { song -> song.durationSeconds > 0 }) " Â· ${seconds / 60} min" else ""
             "${it.size} ${if (it.size == 1) "song" else "songs"}${if (hasMore) " loaded" else ""}$duration"
         }
         LibraryCollectionTitle(item.title, item.artworkUrl, item.subtitle, metadata)
@@ -179,5 +181,25 @@ internal fun CollectionSongRow(track: Track, selected: Boolean, connected: Boole
             }
         }
     }
+    }
+}
+
+
+@Composable
+internal fun CollectionQueueActions(onQueue: (Boolean) -> Unit) {
+    DropdownMenuItem(text = { Text("Play next") }, onClick = { onQueue(true) })
+    DropdownMenuItem(text = { Text("Add to queue") }, onClick = { onQueue(false) })
+}
+
+@Composable
+internal fun CollectionQueueMenu(onQueue: (Boolean) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(painterResource(R.drawable.ic_more), "Queue options")
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            CollectionQueueActions { next -> open = false; onQueue(next) }
+        }
     }
 }

@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -38,6 +39,7 @@ internal fun LibraryPanel(
     onMoveSong: (String, String, Int) -> Unit,
     onClearHistory: () -> Unit,
     onDownloadPlaylist: (DownloadedCollection, List<Track>) -> Unit,
+    onQueueTracks: (List<Track>, Boolean) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
     bottomClearance: androidx.compose.ui.unit.Dp = 0.dp,
 ) {
@@ -49,18 +51,26 @@ internal fun LibraryPanel(
     LaunchedEffect(state.playlists, state.loading) {
         if (!state.loading && playlistId != null && selected == null) playlistId = null
     }
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    val overviewScroll = rememberLazyListState()
+    val detailScroll = key(playlistId) { rememberLazyListState() }
+    Column(modifier.collectionMotion(playlistId), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (selected == null) {
             LibraryFilters(listOf("Playlists", "Favorites", "History"), section, label = { it }) { section = it }
         }
         if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-        else LazyColumn(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(if (selected == null) 4.dp else 12.dp),
+        else LazyColumn(Modifier.weight(1f).fillMaxWidth(),
+            state = if (selected == null) overviewScroll else detailScroll, verticalArrangement = Arrangement.spacedBy(if (selected == null) 4.dp else 12.dp),
             contentPadding = PaddingValues(bottom = 16.dp + bottomClearance)) {
             when {
                 selected != null -> {
                     item {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            BackIconButton(onClick = { playlistId = null })
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                BackIconButton(onClick = { playlistId = null })
+                                if (playback.connected && selected.tracks.isNotEmpty()) {
+                                    CollectionQueueMenu { next -> onQueueTracks(selected.tracks, next) }
+                                }
+                            }
                             LibraryCollectionTitle(selected.name, selected.tracks.firstOrNull()?.artworkUrl,
                                 metadata = "${selected.tracks.size} songs on this device")
                             CollectionPlaybackButtons(selected.tracks, false, playback.connected, onPlayPlaylist,

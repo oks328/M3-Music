@@ -32,6 +32,7 @@ internal fun CatalogCollectionPanel(
     collectionDownload: @Composable (AccountItem, AccountPage) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    queueCollection: (AccountItem, AccountPage, Boolean) -> Unit = { _, _, _ -> },
 ) {
     var trail by remember(root.id) { mutableStateOf(listOf(root)) }
     val selected = trail.last()
@@ -65,8 +66,9 @@ internal fun CatalogCollectionPanel(
         val entries = shelf.items.filter { it.kind == AccountItemKind.ALBUM || it.kind == AccountItemKind.PLAYLIST }
         if (entries.isEmpty()) null else shelf.title to entries
     }.ifEmpty { if (albums.isEmpty()) emptyList() else listOf("Albums" to albums) }
+    val panelModifier = modifier.collectionMotion(selected.id, trail.size)
     key(selected.id) {
-        LazyColumn(modifier, verticalArrangement = Arrangement.spacedBy(16.dp),
+        LazyColumn(panelModifier, verticalArrangement = Arrangement.spacedBy(16.dp),
             contentPadding = PaddingValues(bottom = bottomClearance + 16.dp)) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -76,11 +78,16 @@ internal fun CatalogCollectionPanel(
                     } else {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             BackIconButton(onClick = back)
-                            Column {
+                            Column(Modifier.weight(1f)) {
                                 Text(selected.title, style = MaterialTheme.typography.headlineMedium)
                                 val credit = collection?.albumArtist ?: selected.albumArtist
                                 if (selected.kind == AccountItemKind.ALBUM && credit != null) {
                                     Text(credit, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                            collection?.let { page ->
+                                if (playback.connected && (songs.isNotEmpty() || page.continuation != null)) {
+                                    CollectionQueueMenu { next -> queueCollection(selected, page, next) }
                                 }
                             }
                         }

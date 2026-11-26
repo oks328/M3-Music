@@ -54,6 +54,7 @@ class MainActivity : ComponentActivity() {
                 val model: MusicViewModel = viewModel()
                 SideEffect { activeModel = model }
                 LaunchedEffect(state.profile) { OfflineDownloads.get(this@MainActivity).resumePending() }
+                val homeNetwork = model.homeNetwork.collectAsStateWithLifecycle().value
                 MusicScreen(
                     search = model.search.collectAsStateWithLifecycle().value,
                     playback = model.playback.collectAsStateWithLifecycle().value,
@@ -62,7 +63,8 @@ class MainActivity : ComponentActivity() {
                     searchHistory = model.searchHistory.collectAsStateWithLifecycle().value,
                     onClearSearchHistory = model::clearSearchHistory,
                     loadDiscovery = account.controller::discovery,
-                    online = model.online.collectAsStateWithLifecycle().value,
+                    online = homeNetwork != null,
+                    homeNetworkKey = homeNetwork?.networkHandle,
                     loadDiscoveryCollection = account.controller::discoveryCollection,
                     findTrackArtists = model::findTrackArtists,
                     findSongCollection = model::findSongCollection,
@@ -97,12 +99,17 @@ class MainActivity : ComponentActivity() {
                     onClearHistory = model::clearHistory,
                     onDismissLibraryError = model::dismissLibraryError,
                     onPlayPlaylist = model::playPlaylist,
+                    onPlayDownloadedPlaylist = model::playDownloadedPlaylist,
                     onPrevious = model::previous,
                     onNext = model::next,
                     onQueueItem = model::playQueueItem,
                     onMoveQueueItem = model::moveQueueItem,
+                    onRemoveQueueItem = model::removeQueueItem,
+                    queueTracksForPlaylist = model::queueTracksForPlaylist,
                     onEnqueue = model::enqueue,
+                    onQueueTracks = model::enqueueTracks,
                     onShuffle = model::toggleShuffle,
+                    onAutoplay = model::toggleAutoplay,
                     onRepeat = model::cycleRepeat,
                     account = state,
                     accountActions = AccountActions(

@@ -29,8 +29,12 @@ internal fun CompactPlayer(
     onExpand: () -> Unit,
     modifier: Modifier = Modifier,
     inTransform: Boolean = false,
+    onPrevious: () -> Unit = {},
 ) {
     val track = state.track ?: return
+    val (swipe, swipeLayer, _, skipNext) = rememberTrackSwipe(
+        state.queueEntryIds.getOrNull(state.queueIndex) ?: track.id,
+        state.canPrevious, state.canNext, onPrevious, onNext)
     val colors = MaterialTheme.colorScheme
     val motion = MaterialTheme.motionScheme
     val actionCorner by animateDpAsState(if (state.playing) 16.dp else 24.dp, motion.fastSpatialSpec(),
@@ -38,22 +42,24 @@ internal fun CompactPlayer(
     Surface(onClick = onExpand, shape = RoundedCornerShape(CompactPlayerCorner),
         color = if (inTransform) androidx.compose.ui.graphics.Color.Transparent else colors.secondaryContainer,
         contentColor = colors.onSecondaryContainer,
-        modifier = modifier.fillMaxWidth().semantics { contentDescription = "Open now playing" }) {
+        modifier = modifier.then(if (inTransform) Modifier else swipe).fillMaxWidth().semantics { contentDescription = "Open now playing" }) {
         BoxWithConstraints {
             val showNext = maxWidth >= 350.dp && LocalDensity.current.fontScale <= 1.2f && state.canNext
             Column {
                 Row(Modifier.padding(start = 8.dp, end = 6.dp, top = 5.dp, bottom = 5.dp),
                     verticalAlignment = Alignment.CenterVertically) {
-                    Artwork(track.artworkUrl, Modifier.size(44.dp), state.offline, cornerRadius = 14.dp)
-                    Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                        Text(track.title, style = LocalMusicTypeStyles.current.compactTrackTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(when {
-                            state.error != null -> "Playback needs attention"
-                            state.resolving || state.buffering -> "Loading…"
-                            else -> track.artist
-                        }, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Row(Modifier.weight(1f).then(swipeLayer), verticalAlignment = Alignment.CenterVertically) {
+                        Artwork(track.artworkUrl, Modifier.size(44.dp), state.offline, cornerRadius = 14.dp)
+                        Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
+                            Text(track.title, style = LocalMusicTypeStyles.current.compactTrackTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(when {
+                                state.error != null -> "Playback needs attention"
+                                state.resolving || state.buffering -> "Loading…"
+                                else -> track.artist
+                            }, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
                     }
-                    if (showNext) IconButton(onClick = onNext) {
+                    if (showNext) IconButton(onClick = skipNext) {
                         Icon(painterResource(R.drawable.ic_next), "Next track", Modifier.size(22.dp))
                     }
                     FilledIconButton(onClick = onToggle, enabled = state.connected && !state.resolving && state.error == null,

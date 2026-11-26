@@ -4,17 +4,13 @@ package io.github.oks328.m3music
 
 import android.app.Application
 import android.content.ComponentName
+import android.os.Bundle
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import android.net.Uri
-import android.os.Bundle
-import java.util.UUID
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.media3.common.MediaItem
-import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
@@ -24,6 +20,13 @@ import io.github.oks328.m3music.music.YouTubeMusicRepository
 import io.github.oks328.m3music.playback.PlaybackService
 import io.github.oks328.m3music.playback.PlaybackState
 import io.github.oks328.m3music.playback.RepeatMode
+import io.github.oks328.m3music.playback.AutoplayEnabled
+import io.github.oks328.m3music.playback.AutoplayPreferences
+import io.github.oks328.m3music.playback.QueueEntryId
+import io.github.oks328.m3music.playback.InsertShuffledQueue
+import io.github.oks328.m3music.playback.isDownloadQueue
+import io.github.oks328.m3music.playback.queueItem
+import io.github.oks328.m3music.playback.queueOrder
 import io.github.oks328.m3music.downloads.OfflineDownloads
 import io.github.oks328.m3music.downloads.DownloadedCollection
 import io.github.oks328.m3music.downloads.DownloadStatus
@@ -33,6 +36,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -49,26 +53,42 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     } == true
 
-    val online = callbackFlow {
+    private fun validatedNetwork(): Network? = connectivity?.let { manager ->
+        manager.activeNetwork?.takeIf { network ->
+            manager.getNetworkCapabilities(network)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+        }
+    }
+
+    val homeNetwork = callbackFlow {
         val manager = connectivity
         if (manager == null) {
-            trySend(false)
             close()
             return@callbackFlow
         }
         val callback = object : ConnectivityManager.NetworkCallback() {
+            private var active: Network? = null
+
+            override fun onAvailable(network: Network) {
+                active = network
+            }
+
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
-                trySend(capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET))
+                if (network == active) {
+                    trySend(network.takeIf { capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) })
+                }
             }
 
             override fun onLost(network: Network) {
-                trySend(false)
+                if (network == active) {
+                    active = null
+                    trySend(null)
+                }
             }
         }
+        trySend(validatedNetwork())
         manager.registerDefaultNetworkCallback(callback)
-        trySend(isOnline())
         awaitClose { manager.unregisterNetworkCallback(callback) }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), isOnline())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), validatedNetwork())
 
     private val searchController = SearchController(viewModelScope, catalog::searchCollections,
         isOnline = ::isOnline, searchCatalog = YouTubeMusicRepository::search)
@@ -76,9 +96,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun findTrackArtists(track: Track) = catalog.findTrackArtists(track)
     suspend fun findSongCollection(track: Track, kind: io.github.oks328.m3music.account.AccountItemKind) =
         catalog.findSongCollection(track, kind)
-    private val mutablePlayback = MutableStateFlow(PlaybackState())
-    val playback = mutablePlayback.asStateFlow()
+    private val playbackPreferences = application.getSharedPreferences(AutoplayPreferences, 0)
+    private val mutablePlayback = MutableStateFlow(PlaybackState(
+        autoplay = playbackPreferences.getBoolean(AutoplayEnabled, false)))
+    val playback = combine(mutablePlayback, PlaybackService.autoplayPreview) { state, preview ->
+        state.copy(autoplayTracks = preview.tracks, autoplayLoading = preview.loading)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, mutablePlayback.value)
     private var controller: MediaController? = null
+    private var queueGeneration = 0
     private val controllerFuture = MediaController.Builder(application,
         SessionToken(application, ComponentName(application, PlaybackService::class.java)))
         .setListener(object : MediaController.Listener {
@@ -143,7 +168,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             player.stop()
             player.clearMediaItems()
         }
-        mutablePlayback.value = PlaybackState(connected = controller != null)
+        mutablePlayback.value = PlaybackState(connected = controller != null, autoplay = mutablePlayback.value.autoplay)
     }
 
     fun togglePlayback() {
@@ -169,25 +194,74 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         } else mutablePlayback.value.track?.let(::play)
     }
 
-    fun playPlaylist(tracks: List<Track>, startIndex: Int = 0) {
+    fun playPlaylist(tracks: List<Track>, startIndex: Int = 0) =
+        startQueue(tracks, startIndex, downloadQueue = false)
+
+    fun playDownloadedPlaylist(tracks: List<Track>, startIndex: Int) =
+        startQueue(tracks, startIndex, downloadQueue = true)
+
+    private fun startQueue(tracks: List<Track>, startIndex: Int, downloadQueue: Boolean) {
         if (tracks.isEmpty() || startIndex !in tracks.indices) return
         val player = controller ?: return
+        queueGeneration++
         player.stop()
         val saved = savedTrackIds()
-        val items = tracks.map { it.queueItem(it.id in saved) }
-        mutablePlayback.value = PlaybackState(connected = true, track = tracks[startIndex], offline = tracks[startIndex].id in saved)
+        val items = tracks.map { it.queueItem(it.id in saved, downloadQueue = downloadQueue) }
+        mutablePlayback.value = PlaybackState(connected = true, track = tracks[startIndex], offline = tracks[startIndex].id in saved, autoplay = mutablePlayback.value.autoplay)
         player.setMediaItems(items, startIndex, 0)
         player.prepare()
         player.play()
         updatePlayback()
     }
 
-    fun enqueue(track: Track) {
+    fun enqueue(track: Track) = enqueueTracks(listOf(track), playNext = false)
+
+    fun enqueueTracks(tracks: List<Track>, playNext: Boolean) {
         val player = controller ?: return
-        if (!player.isCommandAvailable(Player.COMMAND_CHANGE_MEDIA_ITEMS)) return
+        if (tracks.isEmpty() || !player.isCommandAvailable(Player.COMMAND_CHANGE_MEDIA_ITEMS)) return
         if (player.mediaItemCount == 0) player.pause()
-        player.addMediaItem(track.queueItem(track.id in savedTrackIds()))
+        val saved = savedTrackIds()
+        val index = if (playNext && player.mediaItemCount > 0) player.currentMediaItemIndex + 1
+            else player.mediaItemCount
+        val items = tracks.map { it.queueItem(it.id in saved) }
+        if (player.shuffleModeEnabled && player.mediaItemCount > 0) {
+            player.sendCustomCommand(InsertShuffledQueue, Bundle().apply {
+                putBoolean("next", playNext)
+                putParcelableArrayList("items", ArrayList(items.map { it.toBundleIncludeLocalConfiguration() }))
+            })
+        } else player.addMediaItems(index, items)
         updatePlayback()
+    }
+
+    fun queueTracksForPlaylist(): List<Track> {
+        val player = controller ?: return emptyList()
+        return player.currentTimeline.queueOrder(player.shuffleModeEnabled).map { index ->
+            val item = player.getMediaItemAt(index)
+            Track(item.mediaId, item.mediaMetadata.title?.toString().orEmpty(),
+                item.mediaMetadata.artist?.toString().orEmpty(), item.mediaMetadata.artworkUri?.toString(), 0)
+        }
+    }
+
+    fun removeQueueItem(index: Int): (() -> Unit)? {
+        val player = controller ?: return null
+        if (index !in 0 until player.mediaItemCount || index == player.currentMediaItemIndex ||
+            !player.isCommandAvailable(Player.COMMAND_CHANGE_MEDIA_ITEMS)) return null
+        val item = player.getMediaItemAt(index)
+        val current = player.currentMediaItem
+        val successor = if (index + 1 < player.mediaItemCount) player.getMediaItemAt(index + 1) else null
+        val generation = queueGeneration
+        player.removeMediaItem(index)
+        updatePlayback()
+        return undo@{
+            if (controller !== player || !player.isConnected || queueGeneration != generation ||
+                !player.isCommandAvailable(Player.COMMAND_CHANGE_MEDIA_ITEMS)) return@undo
+            val remaining = (0 until player.mediaItemCount).map(player::getMediaItemAt)
+            if (item in remaining || (current !in remaining && (successor == null || successor !in remaining))) return@undo
+            val restoreIndex = remaining.indexOf(successor).takeIf { it >= 0 }
+                ?: index.coerceAtMost(remaining.size)
+            player.addMediaItem(restoreIndex, item)
+            updatePlayback()
+        }
     }
 
     fun moveQueueItem(from: Int, to: Int) {
@@ -201,19 +275,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private fun savedTrackIds() = downloads.value.items
         .filter { it.status == DownloadStatus.COMPLETED }.map { it.track.id }.toSet()
 
-    private companion object {
-        const val QueueEntryId = "io.github.oks328.m3music.QUEUE_ENTRY_ID"
+    fun toggleAutoplay() {
+        val enabled = !mutablePlayback.value.autoplay
+        playbackPreferences.edit().putBoolean(AutoplayEnabled, enabled).apply()
+        mutablePlayback.value = mutablePlayback.value.copy(autoplay = enabled)
     }
-
-    private fun Track.queueItem(saved: Boolean): MediaItem =
-        MediaItem.Builder().setMediaId(id)
-            .setUri(if (saved) "offline:///$id" else "track:///$id")
-            .setCustomCacheKey(id)
-            .setMediaMetadata(MediaMetadata.Builder().setTitle(title).setArtist(artist)
-                .setArtworkUri(artworkUrl?.let(Uri::parse))
-                .setExtras(Bundle().apply { putString(QueueEntryId, UUID.randomUUID().toString()) })
-                .build())
-            .build()
 
     fun previous() { controller?.seekToPreviousMediaItem(); updatePlayback() }
     fun next() { controller?.seekToNextMediaItem(); updatePlayback() }
@@ -256,15 +322,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun download(track: Track) = offlineDownloads.download(track)
     fun setWifiOnly(enabled: Boolean) = offlineDownloads.setWifiOnly(enabled)
     fun removeDownload(id: String) {
-        if (playback.value.offline && playback.value.track?.id == id) {
+        if (mutablePlayback.value.offline && mutablePlayback.value.track?.id == id) {
             controller?.stop()
             controller?.clearMediaItems()
-            mutablePlayback.value = PlaybackState(connected = controller?.isConnected == true)
+            mutablePlayback.value = PlaybackState(connected = controller?.isConnected == true, autoplay = mutablePlayback.value.autoplay)
         }
         offlineDownloads.remove(id)
     }
 
     private var queueTimeline: androidx.media3.common.Timeline? = null
+    private var cachedDownloadQueue = false
     private var cachedQueue: List<Track> = emptyList()
     private var cachedQueueEntryIds: List<String> = emptyList()
 
@@ -281,6 +348,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val timeline = player.currentTimeline
         if (queueTimeline !== timeline) {
             val mediaItems = List(player.mediaItemCount, player::getMediaItemAt)
+            cachedDownloadQueue = mediaItems.isDownloadQueue()
             cachedQueueEntryIds = mediaItems.mapIndexed { index, queued ->
                 queued.mediaMetadata.extras?.getString(QueueEntryId) ?: "external:${queued.mediaId}:$index"
             }
@@ -310,6 +378,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 else -> RepeatMode.OFF
             },
             queue = cachedQueue,
+            downloadQueue = cachedDownloadQueue,
             queueEntryIds = cachedQueueEntryIds,
             error = if (player.playerError != null && previous.offline)
                 "Couldn't read this download. Remove it and download the song again."

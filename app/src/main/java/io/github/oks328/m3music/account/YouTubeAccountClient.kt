@@ -101,6 +101,7 @@ internal class YouTubeAccountClient(
             }
             is AccountAction.CreatePlaylist -> {
                 body.put("title", normalizePlaylistName(action.name)).put("privacyStatus", "PRIVATE")
+                if (action.videoIds.isNotEmpty()) body.put("videoIds", JSONArray(action.videoIds.map(::videoId)))
                 "playlist/create"
             }
             is AccountAction.DeletePlaylist -> { body.put("playlistId", playlistId(action.id)); "playlist/delete" }

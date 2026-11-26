@@ -17,6 +17,8 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -78,20 +80,26 @@ fun MusicScreen(
     onClearHistory: () -> Unit = {},
     onDismissLibraryError: () -> Unit = {},
     onPlayPlaylist: (List<Track>, Int) -> Unit = { _, _ -> },
+    onPlayDownloadedPlaylist: (List<Track>, Int) -> Unit = onPlayPlaylist,
     onPrevious: () -> Unit = {},
     onNext: () -> Unit = {},
     account: AccountState = AccountState(initializing = false),
     accountActions: AccountActions = AccountActions(),
     onQueueItem: (Int) -> Unit = {},
     onMoveQueueItem: (Int, Int) -> Unit = { _, _ -> },
+    onRemoveQueueItem: (Int) -> (() -> Unit)? = { null },
+    queueTracksForPlaylist: () -> List<Track> = { playback.queue },
     onEnqueue: (Track) -> Unit = {},
+    onQueueTracks: (List<Track>, Boolean) -> Unit = { tracks, _ -> tracks.forEach(onEnqueue) },
     onShuffle: () -> Unit = {},
+    onAutoplay: () -> Unit = {},
     onRepeat: () -> Unit = {},
     searchHistory: List<String> = emptyList(),
     onClearSearchHistory: () -> Unit = {},
     onRememberSearch: (String) -> Unit = {},
     loadDiscovery: suspend () -> List<DiscoveryShelf> = { emptyList() },
     online: Boolean = true,
+    homeNetworkKey: Long? = null,
     loadDiscoveryCollection: suspend (String) -> AccountPage = { AccountPage() },
     findArtist: (suspend (String) -> AccountItem?)? = null,
     findTrackArtists: (suspend (Track) -> List<AccountItem>)? = null,
@@ -170,6 +178,17 @@ fun MusicScreen(
     }
     var lookingUpArtist by remember { mutableStateOf(false) }
     val playerSnackbar = remember { SnackbarHostState() }
+    var savingQueue by remember { mutableStateOf<List<Track>?>(null) }
+    var queueSavePending by remember { mutableStateOf(false) }
+    LaunchedEffect(account.mutating, account.message, account.error) {
+        if (queueSavePending && !account.mutating) {
+            val feedback = account.error ?: account.message?.let { "Queue saved to YouTube Music" }
+            if (feedback != null) {
+                queueSavePending = false
+                playerSnackbar.showSnackbar(feedback)
+            }
+        }
+    }
     var artistChoices by remember(playback.track?.id) { mutableStateOf(emptyList<AccountItem>()) }
     val showPlayerArtist: (AccountItem) -> Unit = { artist ->
         artistChoices = emptyList()
@@ -211,10 +230,41 @@ fun MusicScreen(
             downloadCollection(item, page, fromLibrary)
         }
     }
+    var loadingQueueCollection by remember { mutableStateOf(false) }
+    fun queueTracks(tracks: List<Track>, next: Boolean) {
+        onQueueTracks(tracks, next)
+        scope.launch { snackbar.showSnackbar(if (next) "Playing next" else "Added to queue") }
+    }
+    fun queueCollection(item: AccountItem, page: AccountPage, fromLibrary: Boolean, next: Boolean) {
+        if (loadingQueueCollection) return
+        loadingQueueCollection = true
+        scope.launch {
+            try {
+                val tracks = loadCollectionTracks(item.id, page, fromLibrary)
+                if (tracks.isEmpty()) snackbar.showSnackbar("No songs to add to the queue")
+                else queueTracks(tracks, next)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                snackbar.showSnackbar("Couldn't load songs for the queue")
+            } finally {
+                loadingQueueCollection = false
+            }
+        }
+    }
     LaunchedEffect(library.error) {
         library.error?.let { snackbar.showSnackbar(it); onDismissLibraryError() }
     }
     val keyboard = LocalSoftwareKeyboardController.current
+    val searchFocus = remember { FocusRequester() }
+    var focusSearch by remember { mutableStateOf(false) }
+    LaunchedEffect(focusSearch) {
+        if (focusSearch) {
+            searchFocus.requestFocus()
+            keyboard?.show()
+            focusSearch = false
+        }
+    }
     val searchTerm = query.trim()
     var requestedTerm by remember { mutableStateOf(search.query) }
     val currentOnSearch by rememberUpdatedState(onSearch)
@@ -251,7 +301,7 @@ fun MusicScreen(
                     Column(Modifier.widthIn(max = 448.dp).fillMaxWidth().padding(bottom = 8.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         if (playback.track != null) {
-                            CompactPlayer(playback, onTogglePlayback, onNext = onNext,
+                            CompactPlayer(playback, onTogglePlayback, onNext = onNext, onPrevious = onPrevious,
                                 onExpand = { settlePlayer(true, 0f) },
                                 modifier = Modifier.onGloballyPositioned { coordinates ->
                                     playerMotion.anchor = Rect(coordinates.positionInRoot(), coordinates.size.toSize())
@@ -260,13 +310,18 @@ fun MusicScreen(
                         }
                         MusicBottomNavigation(destination) { label ->
                             openedCatalog = null
+                            if (label == "Search" && destination == "Search") {
+                                searchCollectionId = null
+                                focusSearch = true
+                            }
                             destination = label
                         }
                     }
                 }
             }
         }) { insets ->
-        Box(Modifier.fillMaxSize().musicContentFade(destination), contentAlignment = Alignment.TopCenter) {
+        Box(Modifier.fillMaxSize().musicContentFade(destination)
+            .collectionMotion(openedCatalog?.id ?: searchCollectionId.takeIf { destination == "Search" }), contentAlignment = Alignment.TopCenter) {
         Column(Modifier.fillMaxHeight().padding(
             start = insets.calculateStartPadding(androidx.compose.ui.platform.LocalLayoutDirection.current),
             top = insets.calculateTopPadding(),
@@ -300,7 +355,7 @@ fun MusicScreen(
             if (!showHome && !showLibrary && searchCollection == null && openedCatalog == null) OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().focusRequester(searchFocus),
                 label = { Text("Songs, albums, or artists") },
                 singleLine = true,
                 shape = RoundedCornerShape(24.dp),
@@ -335,6 +390,7 @@ fun MusicScreen(
                 CatalogCollectionPanel(artist, loadDiscoveryCollection, playback, onPlayPlaylist,
                     insets.calculateBottomPadding(),
                     collectionDownload = { item, page -> collectionDownloadButton(item, page, false) },
+                    queueCollection = { item, page, next -> queueCollection(item, page, false, next) },
                     onBack = {
                         openedCatalog = null
                         settlePlayer(returnToPlayer && playback.track != null, 0f)
@@ -345,12 +401,15 @@ fun MusicScreen(
             } else if (showHome) {
                 DiscoveryPanel(account, loadDiscovery, loadDiscoveryCollection, playback, onPlayPlaylist,
                     insets.calculateBottomPadding(),
+                    networkKey = homeNetworkKey,
                     collectionDownload = { item, page -> collectionDownloadButton(item, page, false) },
+                    queueCollection = { item, page, next -> queueCollection(item, page, false, next) },
                     modifier = Modifier.weight(1f).fillMaxWidth())
             } else if (showAccountLibrary) {
                 AccountPanel(account, accountActions, playbackConnected = playback.connected,
                     onPlaySongs = onPlayPlaylist, onDownload = onDownload,
                     collectionDownload = { item, page -> collectionDownloadButton(item, page, true) },
+                    queueCollection = { item, page, next -> queueCollection(item, page, true, next) },
                     candidates = (search.tracks + library.favorites + downloads.items.map { it.track } + library.history).distinctBy { it.id },
                     playingTrackId = playback.track?.id,
                     bottomClearance = insets.calculateBottomPadding(),
@@ -360,14 +419,15 @@ fun MusicScreen(
                     onAdd = { addTrack = it }, onCreate = { createWithTrack = null; creating = true },
                     onRename = { renaming = it }, onDelete = { deleting = it },
                     onRemoveSong = onRemovePlaylistSong, onMoveSong = onMovePlaylistSong,
-                    onClearHistory = onClearHistory, onDownloadPlaylist = onDownloadPlaylist, bottomClearance = insets.calculateBottomPadding(), modifier = Modifier.weight(1f).fillMaxWidth())
+                    onClearHistory = onClearHistory, onDownloadPlaylist = onDownloadPlaylist, onQueueTracks = ::queueTracks, bottomClearance = insets.calculateBottomPadding(), modifier = Modifier.weight(1f).fillMaxWidth())
             } else if (!showLibrary && searchCollection != null) {
                 CatalogCollectionPanel(searchCollection, loadDiscoveryCollection, playback, onPlayPlaylist,
                     insets.calculateBottomPadding(),
                     collectionDownload = { item, page -> collectionDownloadButton(item, page, false) },
+                    queueCollection = { item, page, next -> queueCollection(item, page, false, next) },
                     onBack = { searchCollectionId = null }, modifier = Modifier.weight(1f).fillMaxWidth())
             } else if (showDownloads) {
-                DownloadsPanel(downloads, playback, onPlayPlaylist, onDownload, onRemoveDownload,
+                DownloadsPanel(downloads, playback, onPlayDownloadedPlaylist, onDownload, onRemoveDownload,
                     insets.calculateBottomPadding(),
                     Modifier.weight(1f).fillMaxWidth())
             } else LazyColumn(Modifier.weight(1f).fillMaxWidth()
@@ -455,6 +515,7 @@ fun MusicScreen(
                                     onRememberSearch(searchTerm)
                                     onPlay(track)
                                 },
+                                onPlayNext = { queueTracks(listOf(track), true) },
                                 onEnqueue = {
                                     onEnqueue(track)
                                     scope.launch { snackbar.showSnackbar("Added to queue") }
@@ -483,6 +544,14 @@ fun MusicScreen(
         }
     }
     }
+    savingQueue?.let { tracks ->
+        PlaylistNameDialog("", false, onDismiss = { savingQueue = null },
+            onConfirm = { name ->
+                savingQueue = null
+                queueSavePending = true
+                accountActions.perform(AccountAction.CreatePlaylist(name, tracks.map { it.id }))
+            }, createTitle = "Save queue as playlist")
+    }
     if (showAccount) AccountSettingsDialog(account, accountActions, downloads.wifiOnly, onWifiOnlyChanged) { showAccount = false }
     val currentTrack = playback.track
     if (currentTrack != null) {
@@ -499,11 +568,24 @@ fun MusicScreen(
                         ExpressivePlayer(playback, library.favorites.any { it.id == currentTrack.id }, onTogglePlayback,
                             onSeek, onRetryPlayback, onPrevious, onNext, onQueueItem,
                             onMoveQueueItem = onMoveQueueItem,
+                            onRemoveQueueItem = { index ->
+                                onRemoveQueueItem(index)?.let { undo ->
+                                    playerSnackbar.currentSnackbarData?.dismiss()
+                                    scope.launch {
+                                        if (playerSnackbar.showSnackbar("Removed from queue", actionLabel = "Undo",
+                                                withDismissAction = true, duration = SnackbarDuration.Short) == SnackbarResult.ActionPerformed
+                                        ) undo()
+                                    }
+                                }
+                            },
+                            onSaveQueue = if (account.profile != null && !account.expired && !account.mutating) {
+                                { savingQueue = queueTracksForPlaylist().takeIf { it.isNotEmpty() } }
+                            } else null,
                             onFavorite = { onFavorite(currentTrack, library.favorites.none { it.id == currentTrack.id }) },
                             onAddToPlaylist = { youtubeAddTrack = currentTrack },
                             onDownload = { onDownload(currentTrack) },
                             downloadEntry = downloads.items.firstOrNull { it.track.id == currentTrack.id },
-                            onShuffle = onShuffle, onRepeat = onRepeat, onClose = { settlePlayer(false, 0f) },
+                            onShuffle = onShuffle, onRepeat = onRepeat, onAutoplay = onAutoplay, onClose = { settlePlayer(false, 0f) },
                             swipeModifier = { enabled ->
                                 Modifier.playerSwipe(playerMotion, expandedPlayer, enabled, settlePlayer)
                             },
@@ -624,10 +706,16 @@ internal fun SongRow(track: Track, selected: Boolean, enabled: Boolean, offline:
 }
 
 @Composable
-private fun PlaylistNameDialog(initialName: String, editing: Boolean, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+private fun PlaylistNameDialog(
+    initialName: String,
+    editing: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+    createTitle: String = "New playlist",
+) {
     var name by remember(initialName) { mutableStateOf(initialName) }
     AlertDialog(onDismissRequest = onDismiss,
-        title = { Text(if (editing) "Rename playlist" else "New playlist") },
+        title = { Text(if (editing) "Rename playlist" else createTitle) },
         text = {
             OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Playlist name") },
                 singleLine = true, isError = name.trim().length > 80,

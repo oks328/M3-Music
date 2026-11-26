@@ -100,7 +100,7 @@ interface AccountGateway {
 
 sealed interface AccountAction {
     data class LikeSong(val videoId: String, val like: Boolean) : AccountAction
-    data class CreatePlaylist(val name: String) : AccountAction
+    data class CreatePlaylist(val name: String, val videoIds: List<String> = emptyList()) : AccountAction
     data class RenamePlaylist(val id: String, val name: String) : AccountAction
     data class DeletePlaylist(val id: String) : AccountAction
     data class AddSong(val playlistId: String, val videoId: String) : AccountAction

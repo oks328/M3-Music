@@ -22,6 +22,7 @@ internal fun SearchSongResult(
     loadingCollection: Boolean,
     onPlay: () -> Unit,
     onEnqueue: () -> Unit,
+    onPlayNext: () -> Unit,
     onAddToPlaylist: () -> Unit,
     onArtist: () -> Unit,
     onAlbum: () -> Unit,
@@ -42,6 +43,8 @@ internal fun SearchSongResult(
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(text = { Text("Play") }, enabled = playback.connected,
                     onClick = { menu = false; onPlay() })
+                DropdownMenuItem(text = { Text("Play next") }, enabled = playback.connected,
+                    onClick = { menu = false; onPlayNext() })
                 DropdownMenuItem(text = { Text("Add to queue") }, enabled = playback.connected,
                     onClick = { menu = false; onEnqueue() })
                 DropdownMenuItem(text = { Text("Add to playlist") }, onClick = { menu = false; onAddToPlaylist() })

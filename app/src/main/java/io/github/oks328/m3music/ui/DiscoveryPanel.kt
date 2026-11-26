@@ -34,13 +34,15 @@ internal fun DiscoveryPanel(
     bottomClearance: Dp,
     collectionDownload: @Composable (AccountItem, AccountPage) -> Unit,
     modifier: Modifier = Modifier,
+    networkKey: Long? = null,
+    queueCollection: (AccountItem, AccountPage, Boolean) -> Unit = { _, _, _ -> },
 ) {
     var shelves by remember(account.profile, account.expired) { mutableStateOf<List<DiscoveryShelf>?>(null) }
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     var refresh by remember { mutableIntStateOf(0) }
     var error by remember { mutableStateOf<String?>(null) }
     val selected = shelves?.asSequence()?.flatMap { it.items.asSequence() }?.firstOrNull { it.id == selectedId }
-    LaunchedEffect(account.initializing, account.profile, account.expired, refresh) {
+    LaunchedEffect(account.initializing, account.profile, account.expired, refresh, networkKey) {
         if (account.initializing) return@LaunchedEffect
         error = null
         try {
@@ -53,11 +55,12 @@ internal fun DiscoveryPanel(
         }
     }
     val feedScroll = rememberLazyListState()
+    val panelModifier = modifier.collectionMotion(selected?.id)
     if (selected != null) {
         CatalogCollectionPanel(selected, loadCollection, playback, play, bottomClearance, collectionDownload,
-            onBack = { selectedId = null }, modifier = modifier)
+            onBack = { selectedId = null }, modifier = panelModifier, queueCollection = queueCollection)
     } else {
-        LazyColumn(modifier, state = feedScroll, verticalArrangement = Arrangement.spacedBy(16.dp),
+        LazyColumn(panelModifier, state = feedScroll, verticalArrangement = Arrangement.spacedBy(16.dp),
             contentPadding = PaddingValues(bottom = bottomClearance + 16.dp)) {
                 item {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
